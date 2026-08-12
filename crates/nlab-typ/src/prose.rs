@@ -472,6 +472,34 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let mathscr = scope-or("mathscr", none)
 #let mathrm = scope-or("mathrm", none)
 #let mathit = scope-or("mathit", none)
+#let scalebox = scope-or("scalebox", (f, it) => it)
+#let rotatebox = scope-or("rotatebox", (deg, it) => it)
+#let raisebox = scope-or("raisebox", (d, it) => it)
+#let boxed = scope-or("boxed", it => box(stroke: 0.5pt, inset: 2.5pt, $it$))
+#let textrm = scope-or("textrm", it => math.upright(it))
+#let textup = scope-or("textup", it => math.upright(it))
+#let textbf = scope-or("textbf", it => math.bold(it))
+#let mitexbold = scope-or("mitexbold", it => math.bold(it))
+#let mitexcal = scope-or("mitexcal", it => math.cal(it))
+#let mathrel = scope-or("mathrel", it => math.class("relation", it))
+#let mathbin = scope-or("mathbin", it => math.class("binary", it))
+#let pmod = scope-or("pmod", it => $(#math.op("mod") #it)$)
+#let lvert = scope-or("lvert", sym.bar.v)
+#let rvert = scope-or("rvert", sym.bar.v)
+#let argmin = scope-or("argmin", math.op("arg min", limits: true))
+#let argmax = scope-or("argmax", math.op("arg max", limits: true))
+#let arraystretch = none
+// itex commands that take an argument but also appear bare: tolerate
+// the zero-argument call the converter then emits
+#let argless(name, bare) = {
+  let f = scope-or(name, none)
+  (..args) => if args.pos().len() == 0 { bare } else { f(..args) }
+}
+#let Set = argless("Set", math.upright("Set"))
+#let mitexnot = argless("mitexnot", sym.slash)
+#let hat = (..args) => if args.pos().len() == 0 { sym.hat } else { std.math.hat(..args) }
+#let circle = (..args) => if args.pos().len() == 0 { sym.circle.small } else { std.circle(..args) }
+#let double = argless("double", none)
 #set page(width: 17cm, height: 25cm, margin: 1.6cm, fill: white, numbering: "1")
 #set text(10.5pt)
 #set heading(numbering: "1.")
