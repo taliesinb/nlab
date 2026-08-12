@@ -498,7 +498,6 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let Set = argless("Set", math.upright("Set"))
 #let mitexnot = argless("mitexnot", sym.slash)
 #let hat = (..args) => if args.pos().len() == 0 { sym.hat } else { std.math.hat(..args) }
-#let circle = (..args) => if args.pos().len() == 0 { sym.circle.small } else { std.circle(..args) }
 #let double = argless("double", none)
 #set page(width: 17cm, height: 25cm, margin: 1.6cm, fill: white, numbering: "1")
 #set text(10.5pt)
