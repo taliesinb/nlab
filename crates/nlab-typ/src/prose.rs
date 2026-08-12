@@ -410,6 +410,7 @@ fn markdown_to_typst(src: &str) -> String {
 
 const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-itex, mitex-scope
 #import "@preview/fletcher:0.5.8": diagram, node, edge
+#import "@preview/cetz:0.3.4"
 // natively-emitted math calls the same helpers the mitex plugin's eval
 // scope provides; bind the ones the converter can reference
 #let mitexdisplay = mitex-scope.at("mitexdisplay")

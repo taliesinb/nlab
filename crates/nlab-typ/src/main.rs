@@ -3,6 +3,7 @@ mod emit;
 mod grid;
 mod prose;
 mod tikzcd;
+mod tikzpic;
 
 use std::io::Read;
 

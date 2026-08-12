@@ -14,6 +14,7 @@
 //! diagram converts unless its structure fails to parse.
 
 use crate::emit;
+use crate::tikzpic;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Side {
@@ -1266,6 +1267,36 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         .next()
         .ok_or("no-end")?
         .to_string();
+    // embedded tikzpictures (braid diagrams etc.) convert to CeTZ and
+    // ride in cells behind PIC markers
+    let mut pics: Vec<String> = Vec::new();
+    let mut pic_warnings: Vec<String> = Vec::new();
+    let body = {
+        let re = regex::Regex::new(
+            r"(?s)\\begin\{tikzpicture\}(\[[^\]]*\])?(.*?)\\end\{tikzpicture\}",
+        )
+        .unwrap();
+        let mut failed = false;
+        let out = re
+            .replace_all(&body, |c: &regex::Captures| {
+                match tikzpic::to_cetz(&c[2], c.get(1).map(|m| m.as_str()).unwrap_or("")) {
+                    Some((code, w)) => {
+                        pic_warnings.extend(w);
+                        pics.push(code);
+                        format!("{}{}{}", '\u{E030}', pics.len() - 1, '\u{E031}')
+                    }
+                    None => {
+                        failed = true;
+                        String::new()
+                    }
+                }
+            })
+            .to_string();
+        if failed {
+            return Err("nested-tikz".into());
+        }
+        out
+    };
     if body.contains("\\begin{tikz") {
         return Err("nested-tikz".into());
     }
@@ -1659,13 +1690,17 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         std::collections::HashMap::new();
     for (r, c, tex) in &nodes {
         let cleaned = clean_tex(tex);
-        let label = emit::ts(&cleaned);
+        let content = if cleaned.contains('\u{E030}') {
+            cell_with_pics(&cleaned, &pics)
+        } else {
+            format!("mi({})", emit::ts(&cleaned))
+        };
         let er = *r as f64 + row_off.get(*r as usize).copied().unwrap_or(0.0);
         lines.push(format!(
-            "  node(({}, {}), mi({}), name: <n{}-{}>),",
+            "  node(({}, {}), {}, name: <n{}-{}>),",
             c,
             fmt_f(er),
-            label,
+            content,
             r,
             c
         ));
@@ -2110,6 +2145,67 @@ fn scalebox_label(tex: &str) -> (f64, String) {
         }
     }
     (0.75, tex.to_string())
+}
+
+
+/// Assemble a cell whose math is interleaved with converted
+/// tikzpictures (PIC markers). `\left[ MARKER \right]` around a
+/// picture becomes stretched brackets sized to the canvas.
+fn cell_with_pics(tex: &str, pics: &[String]) -> String {
+    let re = regex::Regex::new("\u{E030}(\\d+)\u{E031}").unwrap();
+    // strip wrappers that only exist to position the picture in TeX
+    let tex = regex::Regex::new(r"\\raisebox\{[^}]*\}\{\s*(\u{E030}\d+\u{E031})\s*\}")
+        .unwrap()
+        .replace_all(tex, "$1")
+        .to_string();
+    let mut parts: Vec<String> = Vec::new();
+    let mut pos = 0usize;
+    for m in re.captures_iter(&tex) {
+        let whole = m.get(0).unwrap();
+        let idx: usize = m[1].parse().unwrap();
+        let mut pre = tex[pos..whole.start()].to_string();
+        let mut bracket = false;
+        // \left[ (with optional color switches) immediately before?
+        let pre_trim = pre.trim_end().to_string();
+        if pre_trim.ends_with("\\left[")
+            || regex::Regex::new(r"\\left\[\s*(\\color\{[^}]*\})?\s*$")
+                .unwrap()
+                .is_match(&pre_trim)
+        {
+            bracket = true;
+            pre = regex::Regex::new(r"\\left\[\s*(\\color\{[^}]*\})?\s*$")
+                .unwrap()
+                .replace(&pre_trim, "")
+                .to_string();
+        }
+        if !pre.trim().is_empty() {
+            parts.push(format!("mi({})", emit::ts(&pre)));
+        }
+        let pic = &pics[idx];
+        if bracket {
+            parts.push(format!(
+                "text(fill: orange, math.equation(math.lr($\\[ #text(fill: black, box({})) \\]$)))",
+                pic
+            ));
+        } else {
+            parts.push(pic.clone());
+        }
+        pos = whole.end();
+        // consume a matching \right] after the marker
+        if bracket {
+            if let Some(m2) = regex::Regex::new(r"^\s*(\\color\{[^}]*\})?\s*\\right\]")
+                .unwrap()
+                .find(&tex[pos..])
+            {
+                pos += m2.end();
+            }
+        }
+    }
+    let tail = &tex[pos..];
+    if !tail.trim().is_empty() {
+        parts.push(format!("mi({})", emit::ts(tail)));
+    }
+    parts.join(" + ")
 }
 
 fn push_label_args(args: &mut Vec<String>, l: &Label, centered: bool, color: Option<&str>) {
