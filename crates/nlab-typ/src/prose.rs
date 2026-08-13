@@ -94,10 +94,7 @@ fn math_to_typst(tex: &str, display: bool) -> String {
     let tex = &emit::fix_itex_builtins(tex);
     if display {
         if let Some(body) = emit::emit_formula_body(tex) {
-            return format!(
-                "#align(center, block(breakable: false)[\n{}])",
-                body.trim_end()
-            );
+            return format!("#nlab-diagram[\n{}]", body.trim_end());
         }
         // plain display math (arrays inside become matrices)
         // emit_equation already includes the leading `#`
@@ -174,6 +171,28 @@ fn image_typst(url: &str, caption_html: &str) -> String {
     }
 }
 
+/// Page-name -> id lookup for in-docset links, loaded from the TSV
+/// named by NLAB_PAGEIDX (name or redirect, tab, page id). Lookups are
+/// case-insensitive like the wiki's.
+fn page_index() -> &'static std::collections::HashMap<String, String> {
+    static IDX: std::sync::OnceLock<std::collections::HashMap<String, String>> =
+        std::sync::OnceLock::new();
+    IDX.get_or_init(|| {
+        let mut m = std::collections::HashMap::new();
+        if let Ok(path) = std::env::var("NLAB_PAGEIDX") {
+            if let Ok(txt) = std::fs::read_to_string(path) {
+                for line in txt.lines() {
+                    if let Some((name, id)) = line.split_once('\t') {
+                        m.entry(name.trim().to_lowercase())
+                            .or_insert_with(|| id.trim().to_string());
+                    }
+                }
+            }
+        }
+        m
+    })
+}
+
 fn wiki_target_url(name: &str) -> String {
     let mut enc = String::new();
     for c in name.trim().chars() {
@@ -210,6 +229,13 @@ fn extract_wiki(src: &str, stash: &mut Stash) -> String {
             return stash.put(format!(
                 "#link(\"https://ncatlab.org/nlab/files/{}\")[{}]",
                 file.trim().replace(' ', "+"),
+                escape_typst(text)
+            ));
+        }
+        if let Some(id) = page_index().get(&target.trim().to_lowercase()) {
+            return stash.put(format!(
+                "#nlab-page(\"{}\")[{}]",
+                id,
                 escape_typst(text)
             ));
         }
@@ -506,6 +532,21 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #set enum(indent: 1.2em)
 #show link: set text(fill: rgb("#1a6318"))
 #show figure.caption: set text(0.85em)
+// diagrams (fletcher/cetz) draw to frames, which the HTML export
+// would silently drop: freeze them as inline SVG there
+#let nlab-diagram(body) = context {
+  let b = block(breakable: false, body)
+  if target() == "html" {
+    html.elem("div", attrs: (style: "text-align: center"), html.frame(b))
+  } else {
+    align(center, b)
+  }
+}
+// in-docset cross-page link; retarget at compile time via
+//   typst compile --input nlab-base=... --input nlab-ext=.html
+#let nlab-page-base = sys.inputs.at("nlab-base", default: "")
+#let nlab-page-ext = sys.inputs.at("nlab-ext", default: ".html")
+#let nlab-page(id, body) = link(nlab-page-base + id + nlab-page-ext, body)
 #let nlab-count = counter("nlab-env")
 #show heading.where(level: 1): it => { nlab-count.update(0); it }
 #let nlab-env(kind, style, id: none, body) = {
@@ -556,7 +597,7 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
         .replace_all(&src, |c: &regex::Captures| {
             match tikzcd::tikzcd_to_fletcher(&c[0]) {
                 Ok((code, _)) => stash.put(format!(
-                    "#align(center, block(breakable: false)[\n{}])",
+                    "#nlab-diagram[\n{}]",
                     code.trim_end()
                 )),
                 Err(_) => c[0].to_string(),
