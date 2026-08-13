@@ -533,7 +533,13 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let double = argless("double", none)
 #set page(width: 17cm, height: 25cm, margin: 1.6cm, fill: white, numbering: "1")
 #set text(10.5pt)
-#set heading(numbering: "1.")
+#set heading(numbering: (..n) => context {
+  if target() == "html" {
+    html.elem("span", attrs: (class: "secnum"), numbering("1.", ..n))
+  } else {
+    numbering("1.", ..n)
+  }
+})
 #set list(indent: 1.2em)
 #set enum(indent: 1.2em)
 #show link: set text(fill: rgb("#1a6318"))

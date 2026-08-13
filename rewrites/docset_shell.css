@@ -28,7 +28,7 @@ html {
 body {
   max-width: 46rem;
   margin: 0 auto;
-  padding: 1.2rem 1.4rem 3rem;
+  padding: 1.2rem 1.4rem 3rem 3.4rem;
   line-height: 1.45;
 }
 a { color: var(--link); text-decoration: none; }
@@ -51,9 +51,25 @@ blockquote {
 math { font-size: 1.06em; }
 .nlab-diagram svg { margin: 0 auto; }
 .nlab-env {
-  margin: 1.1em 0;
-  padding: 0.15em 0 0.15em 1.1em;
+  margin: 1.1em 0 1.1em calc(-1.1em - 3px);
+  padding: 0 0 0 1.1em;
   border-left: 3px solid color-mix(in srgb, var(--link) 45%, transparent);
 }
+.nlab-env > :first-child, .nlab-env > p:first-of-type { margin-top: 0; }
+.nlab-env > :last-child { margin-bottom: 0; }
 .nlab-env.nlab-proof { border-left-color: var(--rule); }
-.nlab-env .qed { float: right; }
+.nlab-env .qed { float: right; margin-top: -1.35em; }
+.nlab-env.nlab-proof::after { content: ""; display: block; clear: both; }
+h2, h3, h4 { position: relative; }
+.secnum {
+  position: absolute;
+  right: calc(100% + 0.55em);
+  white-space: nowrap;
+  color: var(--muted);
+}
+nav .secnum, nav .prefix { position: static; color: inherit; }
+body > h2:not(:first-of-type) {
+  border-top: 1px solid var(--rule);
+  padding-top: 1em;
+  margin-top: 1.9em;
+}
