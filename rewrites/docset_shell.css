@@ -1,0 +1,51 @@
+/* nLab docset page shell, injected into typst's HTML export. */
+:root {
+  color-scheme: light dark;
+  --fg: #222;
+  --bg: #fff;
+  --link: #1a6318;
+  --muted: #666;
+  --rule: #ddd;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #d8d8d8;
+    --bg: #1c1c1e;
+    --link: #8fce6b;
+    --muted: #999;
+    --rule: #3a3a3c;
+  }
+  /* diagrams are frozen SVG with black strokes: invert for dark mode */
+  svg { filter: invert(0.88) hue-rotate(180deg); }
+  img { filter: brightness(0.85); }
+}
+html {
+  font-family: "Charter", "Georgia", "New York", serif;
+  font-size: 16px;
+  color: var(--fg);
+  background: var(--bg);
+}
+body {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.2rem 1.4rem 3rem;
+  line-height: 1.45;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1, h2, h3, h4 { line-height: 1.2; margin: 1.3em 0 0.5em; }
+h1 { font-size: 1.7rem; border-bottom: 1px solid var(--rule); padding-bottom: 0.25em; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.12rem; }
+ul, ol { padding-left: 1.6em; }
+li { margin: 0.3em 0; }
+img, svg { max-width: 100%; height: auto; }
+figure { margin: 1em auto; text-align: center; }
+figcaption { font-size: 0.88em; color: var(--muted); }
+blockquote {
+  margin: 1em 0;
+  padding-left: 1em;
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+}
+math { font-size: 1.06em; }

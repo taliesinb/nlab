@@ -25,18 +25,33 @@ REPORT = HERE / "out/bulk-report.txt"
 FILES_ROOT = ROOT / "build/nlab-files"
 
 
-def one(md: pathlib.Path, pdf: bool):
+CSS = (HERE / "docset_shell.css").read_text()
+
+
+def shellify(html: str, name: str) -> str:
+    """Inject the docset CSS shell and a title into typst's HTML export."""
+    probe = '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    title = name.replace("&", "&amp;").replace("<", "&lt;")
+    inject = f"{probe}<title>{title}</title><style>{CSS}</style>"
+    return html.replace(probe, inject, 1)
+
+
+def one(md: pathlib.Path, pdf: bool, html: bool = False):
     pid = md.parent.name
     name = (md.parent / "name").read_text().strip() if (md.parent / "name").exists() else pid
     typ = OUT / f"{pid}.typ"
-    target = typ.with_suffix(".pdf") if pdf else typ
+    target = typ.with_suffix(".html") if html else (typ.with_suffix(".pdf") if pdf else typ)
     try:
         stamp = max(md.stat().st_mtime, BIN.stat().st_mtime)
         if target.exists() and target.stat().st_mtime > stamp:
             return (pid, name, "ok", True)
     except OSError:
         pass
-    env = dict(os.environ, NLAB_FILES_ROOT=str(FILES_ROOT))
+    env = dict(
+        os.environ,
+        NLAB_FILES_ROOT=str(FILES_ROOT),
+        NLAB_PAGEIDX=str(ROOT / "build/page-index.tsv"),
+    )
     try:
         r = subprocess.run(
             [str(BIN), "page", name],
@@ -51,6 +66,25 @@ def one(md: pathlib.Path, pdf: bool):
     if r.returncode != 0:
         return (pid, name, "convert-fail: " + r.stderr[:120], False)
     typ.write_text(r.stdout)
+    if html:
+        try:
+            c = subprocess.run(
+                [
+                    "typst", "compile", "--format", "html", "--features", "html",
+                    str(typ), str(typ.with_suffix(".html")),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=str(OUT),
+            )
+        except subprocess.TimeoutExpired:
+            return (pid, name, "compile-timeout", False)
+        if c.returncode != 0:
+            return (pid, name, "compile-fail: " + c.stderr.splitlines()[0][:140], False)
+        out = typ.with_suffix(".html")
+        out.write_text(shellify(out.read_text(errors="replace"), name))
+        return (pid, name, "ok", False)
     if not pdf:
         return (pid, name, "ok", False)
     try:
@@ -72,6 +106,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int)
     ap.add_argument("--no-pdf", action="store_true")
+    ap.add_argument("--html", action="store_true")
     ap.add_argument("--jobs", type=int, default=8)
     args = ap.parse_args()
 
@@ -89,7 +124,7 @@ def main():
     ok = cached = 0
     fails = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
-        futs = [ex.submit(one, p, not args.no_pdf) for p in pages]
+        futs = [ex.submit(one, p, not args.no_pdf, args.html) for p in pages]
         for i, f in enumerate(concurrent.futures.as_completed(futs), 1):
             pid, name, status, was_cached = f.result()
             if status == "ok":
