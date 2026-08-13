@@ -753,18 +753,26 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     // literal ( or [ right after a #call() would chain as another
     // argument list, so terminate the expression with `;` first
     let re = regex::Regex::new(&format!("{}(\\d+){}([\\(\\[])?", P0, P1)).unwrap();
-    let body = re
-        .replace_all(&body, |c: &regex::Captures| {
-            let item = &stash.items[c[1].parse::<usize>().unwrap()];
-            match c.get(2) {
-                Some(next) if item.ends_with(')') || item.ends_with(']') => {
-                    format!("{};{}", item, next.as_str())
+    // stash items can themselves contain placeholders (math inside a
+    // wiki link's display text): resolve until fixpoint
+    let mut body = body;
+    for _ in 0..8 {
+        if !body.contains(P0) {
+            break;
+        }
+        body = re
+            .replace_all(&body, |c: &regex::Captures| {
+                let item = &stash.items[c[1].parse::<usize>().unwrap()];
+                match c.get(2) {
+                    Some(next) if item.ends_with(')') || item.ends_with(']') => {
+                        format!("{};{}", item, next.as_str())
+                    }
+                    Some(next) => format!("{}{}", item, next.as_str()),
+                    None => item.clone(),
                 }
-                Some(next) => format!("{}{}", item, next.as_str()),
-                None => item.clone(),
-            }
-        })
-        .to_string();
+            })
+            .to_string();
+    }
     let title_block = title
         .map(|t| format!("#nlab-title[{}]\n", escape_typst(t)))
         .unwrap_or_default();
