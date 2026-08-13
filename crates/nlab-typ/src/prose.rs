@@ -163,7 +163,7 @@ fn image_typst(url: &str, caption_html: &str) -> String {
     if cached {
         let img = format!("nlab-image(\"files/{}\")", name);
         if caption.is_empty() {
-            format!("#align(center, {})", img)
+            format!("#{}", img)
         } else {
             format!("#figure({}, caption: [{}])", img, caption)
         }
@@ -548,9 +548,13 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 // shared file store instead so the docset can dedupe and re-encode
 #let nlab-image(path) = context {
   if target() == "html" {
-    html.elem("img", attrs: (src: path, style: "width: 74%"))
+    html.elem(
+      "div",
+      attrs: (class: "nlab-diagram"),
+      html.elem("img", attrs: (src: path, style: "max-width: 74%")),
+    )
   } else {
-    image(path, width: 74%)
+    align(center, image(path, width: 74%))
   }
 }
 // diagrams (fletcher/cetz) draw to frames, which the HTML export

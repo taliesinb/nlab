@@ -18,11 +18,19 @@ HERE = pathlib.Path(__file__).resolve().parent
 BUILD = HERE.parent / "build/nlab-content/pages"
 FILES = HERE.parent / "build/nlab-files"
 
-REF_RE = re.compile(r"https?://ncatlab\.org/nlab/files/([A-Za-z0-9_.%+-]+)")
+REF_RE = re.compile(
+    r"(?:https?://ncatlab\.org)?/nlab/files/([A-Za-z0-9_.%+-]+)")
+
+
+IMAGE_EXTS = ("png", "jpg", "jpeg", "gif", "svg", "webp")
 
 
 def refs_in(md: pathlib.Path):
-    return set(REF_RE.findall(md.read_text(errors="replace")))
+    return {
+        n
+        for n in REF_RE.findall(md.read_text(errors="replace"))
+        if n.rsplit(".", 1)[-1].lower() in IMAGE_EXTS
+    }
 
 
 def main():
