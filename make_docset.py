@@ -450,6 +450,20 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     shutil.copy(here / "icons" / "logo.svg", documents / "assets" / "logo.svg")
 
+    if args.typst_pages:
+        # shared stylesheets + image stores for the typst-rendered pages
+        typst_css = args.typst_pages.parent / "typ-assets" / "typst.css"
+        if typst_css.exists():
+            shutil.copy(typst_css, documents / "assets" / "typst.css")
+        shutil.copy(here / "rewrites" / "docset_shell.css",
+                    documents / "assets" / "nlab-typst.css")
+        for store in ("nlab-files", "nlab-files-web"):
+            src = args.typst_pages.parent / store
+            if src.is_dir():
+                dst = documents / "pages" / (
+                    "files" if store == "nlab-files" else "files-web")
+                shutil.copytree(src, dst)
+
     css_links = "\n".join(
         f'<link href="../assets/{f}" media="all" rel="stylesheet" '
         'type="text/css" />'

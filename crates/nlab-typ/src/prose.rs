@@ -161,7 +161,7 @@ fn image_typst(url: &str, caption_html: &str) -> String {
     let name = url.rsplit('/').next().unwrap_or(url);
     let cached = url.contains("/nlab/files/") && files_root().join(name).exists();
     if cached {
-        let img = format!("image(\"files/{}\", width: 74%)", name);
+        let img = format!("nlab-image(\"files/{}\")", name);
         if caption.is_empty() {
             format!("#align(center, {})", img)
         } else {
@@ -544,6 +544,15 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #set enum(indent: 1.2em)
 #show link: set text(fill: rgb("#1a6318"))
 #show figure.caption: set text(0.85em)
+// images embed as base64 data URIs under HTML export; reference the
+// shared file store instead so the docset can dedupe and re-encode
+#let nlab-image(path) = context {
+  if target() == "html" {
+    html.elem("img", attrs: (src: path, style: "width: 74%"))
+  } else {
+    image(path, width: 74%)
+  }
+}
 // diagrams (fletcher/cetz) draw to frames, which the HTML export
 // would silently drop: freeze them as inline SVG there
 #let nlab-diagram(body) = context {
