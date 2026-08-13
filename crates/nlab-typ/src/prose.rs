@@ -46,7 +46,13 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
     let bracket_re = regex::Regex::new(r"(?s)\\\[(.*?)\\\]").unwrap();
     let src = bracket_re
         .replace_all(src, |c: &regex::Captures| {
-            let (tex, anchors) = split_math_labels(&c[1]);
+            // authors also use \[..\] as ESCAPED LITERAL brackets, most
+            // often around reference links: leave those to markdown
+            let body = &c[1];
+            if body.contains("<a ") || body.contains("http") || body.contains("](") {
+                return c[0].to_string();
+            }
+            let (tex, anchors) = split_math_labels(body);
             stash.put(format!("{}{}", math_to_typst(&tex, true), anchors))
         })
         .to_string();
@@ -537,7 +543,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let nlab-diagram(body) = context {
   let b = block(breakable: false, body)
   if target() == "html" {
-    html.elem("div", attrs: (style: "text-align: center"), html.frame(b))
+    html.elem("div", attrs: (class: "nlab-diagram"), html.frame(b))
   } else {
     align(center, b)
   }
@@ -549,16 +555,37 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let nlab-page(id, body) = link(nlab-page-base + id + nlab-page-ext, body)
 #let nlab-count = counter("nlab-env")
 #show heading.where(level: 1): it => { nlab-count.update(0); it }
-#let nlab-env(kind, style, id: none, body) = {
-  if style == "num" {
+#let nlab-title(body) = context {
+  if target() == "html" {
+    html.elem("h1", body)
+  } else {
+    align(center, text(1.7em, weight: 700, body))
+    v(0.5em)
+  }
+}
+#let nlab-env(kind, style, id: none, body) = context {
+  let head = if style == "num" {
     nlab-count.step()
-    block(inset: (left: 1.5em), above: 1em, below: 1em)[#context {
+    context {
       let num = str(counter(heading).get().at(0, default: 0)) + "." + str(nlab-count.get().first())
       if id != none { [#metadata(num)#label(id)] }
       strong[#kind #num.]
-    } #body]
+    }
   } else if style == "proof" {
-    block(inset: (left: 1.5em), above: 1em, below: 1em)[_Proof._ #body #h(1fr) $qed$]
+    emph[Proof.]
+  } else { none }
+  if target() == "html" {
+    let qed = if style == "proof" {
+      html.elem("span", attrs: (class: "qed"), $qed$)
+    } else { none }
+    html.elem(
+      "div",
+      attrs: (class: "nlab-env nlab-" + style),
+      [#head #body#qed],
+    )
+  } else if style == "num" or style == "proof" {
+    let tail = if style == "proof" { [#h(1fr) $qed$] } else { none }
+    block(inset: (left: 1.5em), above: 1em, below: 1em)[#head #body#tail]
   } else {
     block(above: 1em, below: 1em, body)
   }
@@ -667,6 +694,11 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     let src = extract_images(&src, &mut stash);
     let src = extract_math(&src, &mut stash);
     let src = extract_fences(&src, &mut stash);
+    // inline <a> tags (used in reference lists) become markdown links
+    let src = regex::Regex::new(r#"(?s)<a\s+href="([^"]+)"[^>]*>(.*?)</a>"#)
+        .unwrap()
+        .replace_all(&src, "[$2]($1)")
+        .to_string();
     let src = extract_wiki(&src, &mut stash);
     // \ref{Id}: Maruku turns these into numbered links to environment
     // anchors (the live site fills the number with JavaScript; we query
@@ -715,12 +747,7 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
         })
         .to_string();
     let title_block = title
-        .map(|t| {
-            format!(
-                "#align(center)[#text(1.7em, weight: 700)[{}]]\n#v(0.5em)\n",
-                escape_typst(t)
-            )
-        })
+        .map(|t| format!("#nlab-title[{}]\n", escape_typst(t)))
         .unwrap_or_default();
     let body = emit::nativize_calls(&format!("{}{}\n", title_block, body));
     // typst labels must be unique: only the first attachment of an id
