@@ -60,11 +60,13 @@ math { font-size: 1.06em; }
 .nlab-kind-example { --acc: #d290a5; }
 .nlab-kind-lemma { --acc: #5fb0a5; }
 .nlab-kind-theorem { --acc: var(--link); }
+.nlab-kind-remark, .nlab-kind-note { --acc: var(--muted); }
+.nlab-kind-proof { --acc: #6d9ec9; }
 .nlab-env > p:first-of-type > strong:first-child,
 .nlab-env > p:first-of-type > em:first-child { color: var(--acc); }
 .nlab-env > :first-child, .nlab-env > p:first-of-type { margin-top: 0; }
 .nlab-env > :last-child { margin-bottom: 0; }
-.nlab-env.nlab-proof { --acc: var(--muted); border-left-color: var(--rule); }
+.nlab-env.nlab-proof { --acc: #6d9ec9; }
 .nlab-env .qed { float: right; margin-top: -1.35em; }
 .nlab-env.nlab-proof::after { content: ""; display: block; clear: both; }
 h2, h3, h4 { position: relative; }
