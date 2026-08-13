@@ -502,6 +502,8 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #set page(width: 17cm, height: 25cm, margin: 1.6cm, fill: white, numbering: "1")
 #set text(10.5pt)
 #set heading(numbering: "1.")
+#set list(indent: 1.2em)
+#set enum(indent: 1.2em)
 #show link: set text(fill: rgb("#1a6318"))
 #show figure.caption: set text(0.85em)
 #let nlab-count = counter("nlab-env")
@@ -509,13 +511,13 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let nlab-env(kind, style, id: none, body) = {
   if style == "num" {
     nlab-count.step()
-    block(inset: (left: 0.6em), above: 1em, below: 1em)[#context {
+    block(inset: (left: 1.5em), above: 1em, below: 1em)[#context {
       let num = str(counter(heading).get().at(0, default: 0)) + "." + str(nlab-count.get().first())
       if id != none { [#metadata(num)#label(id)] }
       strong[#kind #num.]
     } #body]
   } else if style == "proof" {
-    block(inset: (left: 0.6em), above: 1em, below: 1em)[_Proof._ #body #h(1fr) $qed$]
+    block(inset: (left: 1.5em), above: 1em, below: 1em)[_Proof._ #body #h(1fr) $qed$]
   } else {
     block(above: 1em, below: 1em, body)
   }
