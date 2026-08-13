@@ -586,7 +586,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
     } else { none }
     html.elem(
       "div",
-      attrs: (class: "nlab-env nlab-" + style),
+      attrs: (class: "nlab-env nlab-" + style + " nlab-kind-" + lower(kind)),
       [#head #body#qed],
     )
   } else if style == "num" or style == "proof" {

@@ -51,13 +51,20 @@ blockquote {
 math { font-size: 1.06em; }
 .nlab-diagram svg { margin: 0 auto; }
 .nlab-env {
+  --acc: var(--link);
   margin: 1.1em 0 1.1em calc(-1.1em - 3px);
   padding: 0 0 0 1.1em;
-  border-left: 3px solid color-mix(in srgb, var(--link) 45%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--acc) 45%, transparent);
 }
+.nlab-kind-definition { --acc: #d99a4e; }
+.nlab-kind-example { --acc: #d290a5; }
+.nlab-kind-lemma { --acc: #5fb0a5; }
+.nlab-kind-theorem { --acc: var(--link); }
+.nlab-env > p:first-of-type > strong:first-child,
+.nlab-env > p:first-of-type > em:first-child { color: var(--acc); }
 .nlab-env > :first-child, .nlab-env > p:first-of-type { margin-top: 0; }
 .nlab-env > :last-child { margin-bottom: 0; }
-.nlab-env.nlab-proof { border-left-color: var(--rule); }
+.nlab-env.nlab-proof { --acc: var(--muted); border-left-color: var(--rule); }
 .nlab-env .qed { float: right; margin-top: -1.35em; }
 .nlab-env.nlab-proof::after { content: ""; display: block; clear: both; }
 h2, h3, h4 { position: relative; }
