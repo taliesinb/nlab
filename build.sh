@@ -56,11 +56,18 @@ if [[ -d "$ROOT/rewrites/out/svg" ]]; then
     DIAGRAMS="--diagrams $ROOT/rewrites/out/svg"
 fi
 
+# Typst-rendered pages (rewrites/bulk_pages.py --html), if built.
+TYPST_PAGES=""
+if [[ -d "$BUILD/typ-pages" ]]; then
+    TYPST_PAGES="--typst-pages $BUILD/typ-pages"
+fi
+
 python3 "$ROOT/make_docset.py" \
     --html "$BUILD/nlab-content-html" \
     --source "$BUILD/nlab-content" \
     --assets "$BUILD/assets" \
     --out "$ROOT/dist" \
-    $DIAGRAMS
+    $DIAGRAMS \
+    $TYPST_PAGES
 
 echo "Docset written to $ROOT/dist/nLab.docset"
