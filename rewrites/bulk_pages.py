@@ -104,6 +104,38 @@ def webp_name(name: str) -> str | None:
     return None
 
 
+def is_lineart(name: str) -> bool:
+    """Line-art-on-white heuristic (near-white border + few distinct
+    colors): such images invert cleanly in dark mode, photos must not.
+    Cached as a .lineart/.photo sidecar next to the webp cache."""
+    stem = name.rsplit(".", 1)[0]
+    yes, no = WEBP_CACHE / f"{stem}.lineart", WEBP_CACHE / f"{stem}.photo"
+    if yes.exists():
+        return True
+    if no.exists():
+        return False
+    src = FILES_ROOT / name
+    verdict = False
+    try:
+        from PIL import Image
+
+        im = Image.open(src).convert("RGB")
+        im.thumbnail((64, 64))
+        px = list(im.getdata())
+        w, h = im.size
+        border = (px[:w] + px[-w:]
+                  + [px[r * w] for r in range(h)]
+                  + [px[r * w + w - 1] for r in range(h)])
+        white = sum(1 for c in border if min(c) > 225) / max(len(border), 1)
+        colors = len({(r >> 4, g >> 4, b >> 4) for r, g, b in px})
+        verdict = white > 0.85 and colors < 400
+    except Exception:
+        pass
+    WEBP_CACHE.mkdir(parents=True, exist_ok=True)
+    (yes if verdict else no).touch()
+    return verdict
+
+
 def shellify(html: str, name: str) -> str:
     """Docset post-pass on typst's HTML export: shared stylesheets
     instead of inline <style>, a <title>, cached-minified inline SVGs,
@@ -124,10 +156,13 @@ def shellify(html: str, name: str) -> str:
     html = SVG_RE.sub(lambda m: minified_svg(m.group(0)), html)
 
     def img(m: re.Match) -> str:
+        tag = m.group(0)
         w = webp_name(m.group(2))
         if w:
-            return f"{m.group(1)}files-web/{w}{m.group(3)}"
-        return m.group(0)
+            tag = f"{m.group(1)}files-web/{w}{m.group(3)}"
+        if is_lineart(m.group(2)):
+            tag = tag.replace("<img ", '<img class="nlab-invert" ', 1)
+        return tag
 
     return IMG_RE.sub(img, html)
 

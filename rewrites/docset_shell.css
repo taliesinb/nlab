@@ -82,3 +82,6 @@ body > h2:not(:first-of-type) {
   padding-top: 1em;
   margin-top: 1.9em;
 }
+@media (prefers-color-scheme: dark) {
+  img.nlab-invert { filter: invert(0.88) hue-rotate(180deg); }
+}
