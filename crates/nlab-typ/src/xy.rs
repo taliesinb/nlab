@@ -9,6 +9,8 @@
 
 /// Translate an xymatrix body to a tikzcd body.
 pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
+    // plain-TeX row separators
+    let body = body.replace("\\cr", "\\\\");
     let b: Vec<char> = body.chars().collect();
     let mut out = String::new();
     let mut i = 0usize;
@@ -48,8 +50,8 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                     format!("xy2b{}", twocell_n),
                 );
                 out.push_str(&format!(
-                    "\\ar[{d}, bend left=40, \"{{{top}}}\"{{name={ta}}}]\
-\\ar[{d}, bend right=40, \"{{{bot}}}\"{{swap, name={tb}}}]\
+                    "\\ar[{d}, bend left=25, \"{{{top}}}\"{{name={ta}}}]\
+\\ar[{d}, bend right=25, \"{{{bot}}}\"{{swap, name={tb}}}]\
 \\ar[Rightarrow, from={ta}, to={tb}, \"{{{center}}}\"]",
                     d = dir,
                     top = top,
@@ -201,6 +203,18 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
             opts.push(format!("to={}", ta));
             i = ni;
         }
+        // trailing <shift> after the target: \ar@{}[rr]<3ex>^{..}
+        if b.get(i) == Some(&'<') {
+            let mut j = i + 1;
+            while j < b.len() && b[j] != '>' {
+                j += 1;
+            }
+            let spec: String = b[i + 1..j].iter().collect();
+            if let Some(o) = shift_opt(&spec) {
+                opts.push(o);
+                i = j + 1;
+            }
+        }
         // labels: (^|_|,|) [-<>]* then {group} | \command | single char,
         // optionally suffixed ="name"; xy tolerates whitespace between
         // the arrow and its labels (and between labels)
@@ -217,6 +231,7 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
             // position modifiers: - midpoint (default), < toward the
             // start, > toward the end (repeats push further)
             let mut toward = 0i32;
+            let mut frac: Option<f64> = None;
             while matches!(b.get(i), Some('-') | Some('<') | Some('>')) {
                 match b[i] {
                     '<' => toward -= 1,
@@ -224,6 +239,19 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                     _ => {}
                 }
                 i += 1;
+            }
+            // fractional position: ^(0.25){label}
+            if b.get(i) == Some(&'(') {
+                let mut j = i + 1;
+                let mut t = String::new();
+                while j < b.len() && b[j] != ')' {
+                    t.push(b[j]);
+                    j += 1;
+                }
+                if let Ok(v) = t.trim().parse::<f64>() {
+                    frac = Some(v);
+                    i = j + 1;
+                }
             }
             let tex = if b.get(i) == Some(&'{') {
                 let (t, end) = balanced(&b, i, '{', '}');
@@ -263,12 +291,19 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                 '|' => mods.push("description".into()),
                 _ => {}
             }
-            match toward {
-                t if t <= -2 => mods.push("very near start".into()),
-                -1 => mods.push("near start".into()),
-                1 => mods.push("near end".into()),
-                t if t >= 2 => mods.push("very near end".into()),
-                _ => {}
+            match frac {
+                Some(v) if v <= 0.15 => mods.push("very near start".into()),
+                Some(v) if v <= 0.4 => mods.push("near start".into()),
+                Some(v) if v >= 0.85 => mods.push("very near end".into()),
+                Some(v) if v >= 0.6 => mods.push("near end".into()),
+                Some(_) => {}
+                None => match toward {
+                    t if t <= -2 => mods.push("very near start".into()),
+                    -1 => mods.push("near start".into()),
+                    1 => mods.push("near end".into()),
+                    t if t >= 2 => mods.push("very near end".into()),
+                    _ => {}
+                },
             }
             if let Some(n) = name {
                 mods.push(format!("name={}", n));

@@ -70,11 +70,10 @@ def original_svgs(md_page: pathlib.Path):
 
 
 def render(block: str) -> pathlib.Path | None:
+    """The svg is named by the hash of the CONVERTED source, so the
+    filename changes whenever the converter's output does — otherwise
+    the browser serves stale cached images across rebuilds."""
     CACHE.mkdir(parents=True, exist_ok=True)
-    h = hashlib.sha1(block.encode()).hexdigest()[:16]
-    svg = CACHE / f"{h}.svg"
-    if svg.exists():
-        return svg
     r = subprocess.run(
         [str(BINARY), "page"],
         input=block + "\n",
@@ -82,6 +81,10 @@ def render(block: str) -> pathlib.Path | None:
         text=True,
         timeout=300,
     )
+    h = hashlib.sha1((block + r.stdout).encode()).hexdigest()[:16]
+    svg = CACHE / f"{h}.svg"
+    if svg.exists():
+        return svg
     if r.returncode != 0:
         (CACHE / f"{h}.err").write_text(r.stderr)
         return None

@@ -756,6 +756,11 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     .unwrap();
     let src = xy_re
         .replace_all(&src, |c: &regex::Captures| {
+            // documentation quoting xy syntax in code spans is not a
+            // diagram
+            if c[2].contains("<nowiki>") || c[2].contains('`') {
+                return c[0].to_string();
+            }
             // spacing riders: @C=50pt, @R12pt, @C+2pc, @=18pt ...
             let mut seps: Vec<String> = Vec::new();
             let rider = regex::Regex::new(
@@ -773,13 +778,15 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
                     _ => 1.0,
                 };
                 let mut pt = v * unit;
-                // @C+2pc adds to the default; @C=+80pt just sets
+                // @C+2pc adds to the default; @C=-5pt just sets
                 if m.get(2).is_none() {
                     match m.get(3).map(|x| x.as_str()) {
                         Some("+") => pt += 24.0,
                         Some("-") => pt = (24.0 - pt).max(4.0),
                         _ => {}
                     }
+                } else if m.get(3).map(|x| x.as_str()) == Some("-") {
+                    pt = -pt;
                 }
                 match &m[1] {
                     "C" => seps.push(format!("column sep={}pt", pt)),

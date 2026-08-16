@@ -2659,7 +2659,13 @@ fn clean_tex(s: &str) -> String {
                 .filter(|r| !r.is_empty())
                 .map(|r| format!("\\mbox{{{}}}", r))
                 .collect();
-            format!("\\begin{{matrix}}{}\\end{{matrix}}", rows.join(" \\\\ "))
+            if rows.len() == 1 {
+                // a one-line tabular is just its text; the matrix
+                // wrapper would nest an equation and break \mathclap
+                rows.into_iter().next().unwrap()
+            } else {
+                format!("\\begin{{matrix}}{}\\end{{matrix}}", rows.join(" \\\\ "))
+            }
         })
         .to_string();
     s = split_mbox(&s);
