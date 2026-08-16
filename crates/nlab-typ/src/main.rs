@@ -4,6 +4,7 @@ mod grid;
 mod prose;
 mod tikzcd;
 mod tikzpic;
+mod xy;
 
 use std::io::Read;
 

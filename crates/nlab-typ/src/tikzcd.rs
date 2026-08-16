@@ -1305,7 +1305,7 @@ fn measure_nodes(labels_ts: &[String]) -> Option<Vec<(f64, f64)>> {
     Some(nums.chunks(2).map(|c| (c[0], c[1])).collect())
 }
 
-fn est_halfwidth_pt(tex: &str) -> f64 {
+pub(crate) fn est_halfwidth_pt(tex: &str) -> f64 {
     fn row_width(row: &str) -> f64 {
         let b: Vec<char> = row.chars().collect();
         let mut w = 0.0;

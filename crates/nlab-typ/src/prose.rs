@@ -411,6 +411,20 @@ fn fix_md_link_urls(src: &str) -> String {
     out
 }
 
+/// Typst label identifiers: keep the safe charset, dash the rest.
+fn sanitize_id(id: &str) -> String {
+    id.trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || ":_.-".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
 fn escape_typst(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
@@ -722,6 +736,38 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     let src = src.replace("\\tableofcontents", &stash.put("#outline(depth: 2)".into()));
+    // xymatrix drawings translate to tikzcd vocabulary and ride the
+    // same fletcher pipeline
+    let xy_re = regex::Regex::new(
+        r"(?s)\\begin\{xymatrix(@[^}]*)?\}(.*?)\\end\{xymatrix[^}]*\}",
+    )
+    .unwrap();
+    let src = xy_re
+        .replace_all(&src, |c: &regex::Captures| {
+            // @C=50pt@R=12pt spacing riders -> tikzcd column/row sep
+            let mut seps: Vec<String> = Vec::new();
+            for m in regex::Regex::new(r"@([CR]?)=?([0-9.]+[a-z]+)")
+                .unwrap()
+                .captures_iter(c.get(1).map(|m| m.as_str()).unwrap_or(""))
+            {
+                match &m[1] {
+                    "C" => seps.push(format!("column sep={}", &m[2])),
+                    "R" => seps.push(format!("row sep={}", &m[2])),
+                    _ => seps.push(format!("sep={}", &m[2])),
+                }
+            }
+            let opt = if seps.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", seps.join(", "))
+            };
+            format!(
+                "\\begin{{tikzcd}}{}{}\\end{{tikzcd}}",
+                opt,
+                crate::xy::xymatrix_to_tikzcd(&c[2])
+            )
+        })
+        .to_string();
     // raw tikzcd blocks (the live site renders these server-side)
     let tikz_re =
         regex::Regex::new(r"(?s)\\begin\{tikzcd\}.*?\\end\{tikzcd\}").unwrap();
@@ -739,7 +785,7 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     // raw LaTeX-style theorem environments in prose (as opposed to the
     // +-- fences), optionally carrying a \label{Id}
     const ENVS: &str = "proposition|theorem|lemma|corollary|definition|\
-example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp|\
+example|examples|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp|\
 terminology|notn|notation|conjecture|assumption|exercise";
     // \begin{center}..\end{center} wrappers are transparent for us
     let src = regex::Regex::new(r"\\(begin|end)\{(?:center|centre)\}")
@@ -825,7 +871,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
                 "lemma" | "lem" => ("Lemma", "num"),
                 "corollary" | "cor" => ("Corollary", "num"),
                 "definition" | "defn" => ("Definition", "num"),
-                "example" | "exmp" => ("Example", "num"),
+                "example" | "examples" | "exmp" => ("Example", "num"),
                 "remark" | "rmk" => ("Remark", "num"),
                 "terminology" => ("Terminology", "num"),
                 "notn" | "notation" => ("Notation", "num"),
@@ -879,6 +925,16 @@ terminology|notn|notation|conjecture|assumption|exercise";
     let src = extract_images(&src, &mut stash);
     let src = extract_math(&src, &mut stash);
     let src = extract_fences(&src, &mut stash);
+    // stray \label in prose (outside envs and math) becomes an anchor
+    let label_re = regex::Regex::new(r"\\label\{([^}\n]+)\}").unwrap();
+    let src = label_re
+        .replace_all(&src, |c: &regex::Captures| {
+            stash.put(format!(
+                "#metadata(none)#label(\"{}\")",
+                sanitize_id(&c[1])
+            ))
+        })
+        .to_string();
     // numeric character references leak through the math/stash routes
     let src = regex::Regex::new(r"&#(\d+);")
         .unwrap()
@@ -944,11 +1000,16 @@ terminology|notn|notation|conjecture|assumption|exercise";
     // \ref{Id}: Maruku turns these into numbered links to environment
     // anchors (the live site fills the number with JavaScript; we query
     // the env's metadata statically).
-    let ref_re = regex::Regex::new(r"\\ref\{([A-Za-z0-9:_-]+)\}").unwrap();
+    let ref_re = regex::Regex::new(r"\\ref\{([^}\n]+)\}").unwrap();
     let src = ref_re
         .replace_all(&src, |c: &regex::Captures| {
-            stash.put(format!("#nlab-ref(\"{}\")", &c[1]))
+            stash.put(format!("#nlab-ref(\"{}\")", sanitize_id(&c[1])))
         })
+        .to_string();
+    // a bare \ref with no target is an author slip; drop the command
+    let src = regex::Regex::new(r"\\ref\b")
+        .unwrap()
+        .replace_all(&src, "")
         .to_string();
     // an anchor at the end of a heading would ride into the heading
     // body and be duplicated by #outline(); move it below the heading
