@@ -1,0 +1,9 @@
+{
+  "page": "20761",
+  "note": "malformed anchor '<a: href=' in the references list",
+  "edits": [
+    {"find": "<a: href=\"https://doi.org/10.1016/S0764-4442(99)80090-1\">doi</a>",
+     "replace": "<a href=\"https://doi.org/10.1016/S0764-4442(99)80090-1\">doi</a>",
+     "why": "stray colon after <a breaks tag parsing"}
+  ]
+}

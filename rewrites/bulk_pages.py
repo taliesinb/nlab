@@ -28,6 +28,34 @@ FILES_ROOT = ROOT / "build/nlab-files"
 
 
 CSS = (HERE / "docset_shell.css").read_text()
+EDITS = ROOT / "edits"
+
+
+def apply_edits(pid: str, text: str) -> tuple[str, str | None]:
+    """Overlay pointwise corrections from edits/<pid>.json onto the
+    source before conversion. Each `find` must occur exactly once;
+    misses and ambiguities are reported, not applied."""
+    ef = EDITS / f"{pid}.json"
+    if not ef.exists():
+        return text, None
+    import json
+
+    try:
+        spec = json.loads(ef.read_text())
+    except json.JSONDecodeError as e:
+        return text, f"edits/{pid}.json unparseable: {e}"
+    problems = []
+    for e in spec.get("edits", []):
+        find = e.get("find", "")
+        n = text.count(find) if find else 0
+        if n == 1:
+            text = text.replace(find, e.get("replace", ""), 1)
+        elif n == 0:
+            problems.append(f"stale edit (no match): {find[:50]!r}")
+        else:
+            problems.append(f"ambiguous edit ({n} matches): {find[:50]!r}")
+    return text, "; ".join(problems) or None
+
 SVG_CACHE = ROOT / "build/svgmin"
 WEBP_CACHE = ROOT / "build/nlab-files-web"
 STYLE_RE = re.compile(r"<style>.*?</style>", re.S)
@@ -172,8 +200,11 @@ def one(md: pathlib.Path, pdf: bool, html: bool = False):
     name = (md.parent / "name").read_text().strip() if (md.parent / "name").exists() else pid
     typ = OUT / f"{pid}.typ"
     target = typ.with_suffix(".html") if html else (typ.with_suffix(".pdf") if pdf else typ)
+    edit_file = EDITS / f"{pid}.json"
     try:
         stamp = max(md.stat().st_mtime, BIN.stat().st_mtime)
+        if edit_file.exists():
+            stamp = max(stamp, edit_file.stat().st_mtime)
         if target.exists() and target.stat().st_mtime > stamp:
             return (pid, name, "ok", True)
     except OSError:
@@ -183,10 +214,13 @@ def one(md: pathlib.Path, pdf: bool, html: bool = False):
         NLAB_FILES_ROOT=str(FILES_ROOT),
         NLAB_PAGEIDX=str(ROOT / "build/page-index.tsv"),
     )
+    source, edit_problems = apply_edits(pid, md.read_text(errors="replace"))
+    if edit_problems:
+        print(f"  [edits] {pid} {name}: {edit_problems}", flush=True)
     try:
         r = subprocess.run(
             [str(BIN), "page", name],
-            input=md.read_text(errors="replace"),
+            input=source,
             capture_output=True,
             text=True,
             timeout=120,

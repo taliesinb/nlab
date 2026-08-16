@@ -1,0 +1,8 @@
+{
+  "page": "24183",
+  "note": "anchor closed as '</a<' in the references list",
+  "edits": [
+    {"find": "</a<,", "replace": "</a>,",
+     "why": "typo'd close tag swallows the rest of the list item"}
+  ]
+}

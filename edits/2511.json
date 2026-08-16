@@ -1,0 +1,9 @@
+{
+  "page": "2511",
+  "note": "anchor missing '=' between href and URL",
+  "edits": [
+    {"find": "<a href\"https://doi.org/10.1016/0920-5632(95)00629-X\">doi</a>",
+     "replace": "<a href=\"https://doi.org/10.1016/0920-5632(95)00629-X\">doi</a>",
+     "why": "href\"...\" is not an attribute; tag leaks as text"}
+  ]
+}
