@@ -1,0 +1,11 @@
+{
+  "page": "10881",
+  "note": "unclosed markdown link URL in references",
+  "edits": [
+    {
+      "find": "[pdf](http://www.math.uiuc.edu/K-theory\n\n",
+      "replace": "[pdf](http://www.math.uiuc.edu/K-theory)\n\n",
+      "why": "missing closing paren"
+    }
+  ]
+}

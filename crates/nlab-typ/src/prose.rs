@@ -325,6 +325,73 @@ fn env_kind(class: &str) -> (&'static str, &'static str) {
 
 // -------------------------------------------------------- markdown pass
 
+/// Repair `](url)` spans whose URL contains spaces or unbalanced
+/// parens (both make CommonMark treat the link as literal text).
+fn fix_md_link_urls(src: &str) -> String {
+    let b: Vec<char> = src.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        let is_open = b[i] == ']'
+            && b.get(i + 1) == Some(&'(')
+            && b[i + 2..].iter().take(4).collect::<String>() == "http";
+        if !is_open {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        // walk the URL: balanced close wins; otherwise the last ')'
+        // before end-of-line
+        let start = i + 2;
+        let mut depth = 1i32;
+        let mut end = None;
+        let mut last_close = None;
+        let mut j = start;
+        // authors wrap long URLs across a line; walk past a single
+        // newline but never a blank line or far afield
+        while j < b.len() && j - start < 400 {
+            if b[j] == '\n'
+                && (j + 1 >= b.len() || b[j + 1] == '\n')
+            {
+                break;
+            }
+            match b[j] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    last_close = Some(j);
+                    if depth == 0 {
+                        end = Some(j);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        let (end, balanced) = match (end, last_close) {
+            (Some(e), _) => (e, true),
+            (None, Some(e)) => (e, false),
+            (None, None) => {
+                out.push(b[i]);
+                i += 1;
+                continue;
+            }
+        };
+        let url: String = b[start..end].iter().collect();
+        // a line break inside the URL is wrapping, not content
+        let mut fixed = url.replace('\n', "").replace(' ', "%20");
+        if !balanced {
+            fixed = fixed.replace('(', "%28").replace(')', "%29");
+        }
+        out.push_str("](");
+        out.push_str(&fixed);
+        out.push(')');
+        i = end + 1;
+    }
+    out
+}
+
 fn escape_typst(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
@@ -653,11 +720,40 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     // raw LaTeX-style theorem environments in prose (as opposed to the
     // +-- fences), optionally carrying a \label{Id}
     const ENVS: &str = "proposition|theorem|lemma|corollary|definition|\
-example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp";
+example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp|\
+terminology|notn|notation|conjecture|assumption|exercise";
     // \begin{center}..\end{center} wrappers are transparent for us
-    let src = regex::Regex::new(r"\\(begin|end)\{centre?\}")
+    let src = regex::Regex::new(r"\\(begin|end)\{(?:center|centre)\}")
         .unwrap()
         .replace_all(&src, "")
+        .to_string();
+    // \begin{equation} bodies are display math the earlier extractors
+    // do not cover
+    let eq_re = regex::Regex::new(
+        r"(?s)\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}",
+    )
+    .unwrap();
+    let src = eq_re
+        .replace_all(&src, |c: &regex::Captures| {
+            let (tex, anchors) = split_math_labels(&c[1]);
+            stash.put(format!("{}{}", math_to_typst(&tex, true), anchors))
+        })
+        .to_string();
+    // standalone tikzpicture drawings go through the CeTZ converter
+    let pic_re = regex::Regex::new(
+        r"(?s)\\begin\{tikzpicture\}(\[[^\]]*\])?(.*?)\\end\{tikzpicture\}",
+    )
+    .unwrap();
+    let src = pic_re
+        .replace_all(&src, |c: &regex::Captures| {
+            let opts = c.get(1).map(|m| m.as_str()).unwrap_or("");
+            match crate::tikzpic::to_cetz(&c[2], opts) {
+                Some((code, _)) => {
+                    stash.put(format!("#nlab-diagram[#{}]", code))
+                }
+                None => c[0].to_string(),
+            }
+        })
         .to_string();
     // \begin{imagefromfile} carries a JSON-ish body naming an uploaded
     // file; render like any other stored image
@@ -687,7 +783,7 @@ example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp";
     // one sequential pass so a stray \end (author error) is the one
     // dropped, not the document's final legitimate close
     let env_re = regex::Regex::new(&format!(
-        r"\\(begin|end)\{{({})\}}(\s*\\label\{{([A-Za-z0-9:_.-]+)\}})?",
+        r"\\(begin|end)\{{({})\}}([ \t]*\[([^\]\n]*)\])?(\s*\\label\{{([A-Za-z0-9:_.-]+)\}})?",
         ENVS
     ))
     .unwrap();
@@ -712,13 +808,27 @@ example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp";
                 "definition" | "defn" => ("Definition", "num"),
                 "example" | "exmp" => ("Example", "num"),
                 "remark" | "rmk" => ("Remark", "num"),
+                "terminology" => ("Terminology", "num"),
+                "notn" | "notation" => ("Notation", "num"),
+                "conjecture" => ("Conjecture", "num"),
+                "assumption" => ("Assumption", "num"),
+                "exercise" => ("Exercise", "num"),
                 _ => ("Note", "num"),
             };
             let id_arg = c
-                .get(4)
+                .get(6)
                 .map(|m| format!(", id: \"{}\"", m.as_str()))
                 .unwrap_or_default();
-            stash.put(format!("#nlab-env(\"{}\", \"{}\"{})[", kind, style, id_arg))
+            let title = c
+                .get(4)
+                .map(|m| m.as_str().trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| format!("#strong[({})] ", escape_typst(t)))
+                .unwrap_or_default();
+            stash.put(format!(
+                "#nlab-env(\"{}\", \"{}\"{})[{}",
+                kind, style, id_arg, title
+            ))
         })
         .to_string();
     // any still-unclosed environments get their closes at document end
@@ -740,13 +850,68 @@ example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp";
         .unwrap()
         .replace_all(&src, "$1 $2")
         .to_string();
+    // inline <a> tags become markdown links BEFORE math extraction:
+    // anchors inside \text{} would otherwise reach typst raw and
+    // parse as unclosed <labels>
+    let src = regex::Regex::new(r#"(?s)<a\b[^>]*?href="([^"]+)"[^>]*>(.*?)</a>"#)
+        .unwrap()
+        .replace_all(&src, "[$2]($1)")
+        .to_string();
     let src = extract_images(&src, &mut stash);
     let src = extract_math(&src, &mut stash);
     let src = extract_fences(&src, &mut stash);
-    // inline <a> tags (used in reference lists) become markdown links
-    let src = regex::Regex::new(r#"(?s)<a\s+href="([^"]+)"[^>]*>(.*?)</a>"#)
+    // numeric character references leak through the math/stash routes
+    let src = regex::Regex::new(r"&#(\d+);")
         .unwrap()
-        .replace_all(&src, "[$2]($1)")
+        .replace_all(&src, |c: &regex::Captures| {
+            c[1].parse::<u32>()
+                .ok()
+                .and_then(char::from_u32)
+                .map(String::from)
+                .unwrap_or_default()
+        })
+        .to_string();
+    // Maruku definition lists (`: definition` + 4-space continuation)
+    // are not CommonMark; flatten them so continuations don't become
+    // indented code blocks
+    let src = {
+        let mut out: Vec<String> = Vec::new();
+        let mut in_dl = false;
+        for line in src.lines() {
+            if let Some(rest) = line.strip_prefix(": ") {
+                in_dl = true;
+                out.push(rest.to_string());
+            } else if in_dl && line.starts_with("    ") {
+                out.push(line[4..].to_string());
+            } else {
+                if !line.trim().is_empty() {
+                    in_dl = false;
+                }
+                out.push(line.to_string());
+            }
+        }
+        out.join("\n")
+    };
+    // citations often write \[arXiv:...\](url): escaped brackets are
+    // literal text to CommonMark, so the link is lost — relink with the
+    // brackets kept in the text
+    let src = regex::Regex::new(r"\\{1,2}\[([^\[\]\n]+)\\{1,2}\]\((https?://|/nlab/)")
+        .unwrap()
+        .replace_all(&src, "[&lbrack;$1&rbrack;]($2")
+        .to_string();
+    // named entities for <, >, & are author escapes; keep them literal
+    // through markdown
+    let src = src
+        .replace("&amp;", "&")
+        .replace("&lt;", "\\<")
+        .replace("&gt;", "\\>");
+    // markdown link URLs containing spaces or unbalanced parens make
+    // CommonMark drop the whole link: percent-encode the offenders
+    let src = fix_md_link_urls(&src);
+    // "**bold **" (trailing space) is not CommonMark strong
+    let src = regex::Regex::new(r"\*\*(\S[^*\n]*?) +\*\*")
+        .unwrap()
+        .replace_all(&src, "**$1** ")
         .to_string();
     let src = extract_wiki(&src, &mut stash);
     // \ref{Id}: Maruku turns these into numbered links to environment

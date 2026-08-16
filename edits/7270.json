@@ -1,0 +1,14 @@
+{
+  "page": "7270",
+  "note": "unclosed bold before display math; ATX header without space",
+  "edits": [
+    {
+      "find": "**Proposition\n$$[G\\ell(R),G\\ell(R)] = E(R).$$",
+      "replace": "**Proposition**\n$$[G\\ell(R),G\\ell(R)] = E(R).$$"
+    },
+    {
+      "find": "##$K_1(R)$\n",
+      "replace": "## $K_1(R)$\n"
+    }
+  ]
+}

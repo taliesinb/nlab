@@ -1,0 +1,11 @@
+{
+  "page": "11373",
+  "note": "unclosed markdown link URL in references",
+  "edits": [
+    {
+      "find": "[general BICEP webpage](http://bicep.caltech.edu/public/\n\n",
+      "replace": "[general BICEP webpage](http://bicep.caltech.edu/public/)\n\n",
+      "why": "missing closing paren"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "page": "20479",
+  "note": "link opened with '{' instead of '['",
+  "edits": [
+    {
+      "find": "{this tutorial](https://www.edureka.co/blog/ethereum-private-network-tutorial)",
+      "replace": "[this tutorial](https://www.edureka.co/blog/ethereum-private-network-tutorial)"
+    }
+  ]
+}
