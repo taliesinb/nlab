@@ -602,13 +602,38 @@ fn parse_node_stmt(
             fill.unwrap_or_else(|| "white".into()),
             node_content(trimmed, None)
         )
-    } else {
+    } else if circle && draw {
+        // circled node on a wire crossing
+        hw += 2.0 / unit;
+        hh = hw;
         format!(
-            "content(({:.3}, {:.3}), {})",
+            "content(({:.3}, {:.3}), frame: \"circle\", stroke: 0.5pt + black, fill: {}, padding: {}pt, {})",
             x,
             y,
+            fill.unwrap_or_else(|| "white".into()),
+            inner_sep.unwrap_or(1.5),
             node_content(trimmed, None)
         )
+    } else {
+        // [above]/[below]/[left]/[right] shift off the coordinate
+        let o = parse_opts(&node_opts, unit);
+        let (anchor, gx, gy) = place_anchor(o.place.as_deref(), unit);
+        if anchor != "center" {
+            format!(
+                "content(({:.3}, {:.3}), anchor: \"{}\", {})",
+                x + gx,
+                y + gy,
+                anchor,
+                node_content(trimmed, None)
+            )
+        } else {
+            format!(
+                "content(({:.3}, {:.3}), {})",
+                x,
+                y,
+                node_content(trimmed, None)
+            )
+        }
     };
     Ok((name, NamedNode { x, y, hw, hh }, Some(op)))
 }
@@ -778,6 +803,28 @@ fn parse_path(
                 stroke,
                 fill
             ));
+            continue;
+        }
+        if rest.starts_with("rectangle") {
+            i += 9;
+            let (e, ni) = read_end(&b, i).ok_or("rectangle without corner")?;
+            i = ni;
+            let c = last.ok_or("rectangle without start")?;
+            let fill = opts
+                .fill
+                .as_ref()
+                .map(|f| format!(", fill: {}", f))
+                .unwrap_or_default();
+            ops.push(format!(
+                "rect(({:.3}, {:.3}), ({:.3}, {:.3}), {}{})",
+                c.x + cdx,
+                c.y + cdy,
+                e.x + cdx,
+                e.y + cdy,
+                stroke,
+                fill
+            ));
+            last = Some(e);
             continue;
         }
         if rest.starts_with("to") || rest.starts_with("--") {
