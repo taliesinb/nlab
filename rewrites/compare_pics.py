@@ -113,7 +113,9 @@ def main():
     ap.add_argument("--rows", help="comma-separated indices in this kind")
     ap.add_argument("--all", action="store_true")
     args = ap.parse_args()
-    out = HERE / "out" / f"compare-{args.kind}.html"
+    # partial regens must not clobber the full gallery
+    suffix = "-sample" if args.rows else ""
+    out = HERE / "out" / f"compare-{args.kind}{suffix}.html"
 
     blocks = corpus()
     page_counts: dict[pathlib.Path, int] = {}
