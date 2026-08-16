@@ -2009,8 +2009,9 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         if let (Some(s), None) = (a.sagitta, a.bend) {
             // xy curvature is an absolute bulge; convert to an angle
             // against this chord length
-            let deg = (2.0 * (4.0 * s.abs() / len.max(20.0)).atan()).to_degrees();
-            a.bend = Some(deg.clamp(8.0, 60.0) * s.signum());
+            // fletcher: sagitta = (L/2)tan(bend/2), so bend = 2 atan(2s/L)
+            let deg = (2.0 * (2.0 * s.abs() / len.max(20.0)).atan()).to_degrees();
+            a.bend = Some(deg.clamp(3.0, 60.0) * s.signum());
         }
         let a = &a;
         let mut loop_bend = a.loop_bend;
@@ -2682,12 +2683,29 @@ fn clean_tex(s: &str) -> String {
         .to_string();
     // a size switch leading an \mbox scopes over plain text, where
     // mitex would leave it as literal words: hoist it outside
-    s = regex::Regex::new(
-        r"\\mbox\{\s*\\(tiny|scriptsize|footnotesize|small)\b([^{}]*)\}",
-    )
-    .unwrap()
-    .replace_all(&s, "{\\$1\\mbox{$2}}")
-    .to_string();
+    {
+        let mut from = 0usize;
+        while let Some(rel) = s[from..].find("\\mbox{") {
+            let pos = from + rel;
+            let open = pos + "\\mbox".len();
+            let b: Vec<char> = s[open..].chars().collect();
+            let Some((inner, end)) = read_group(&b, 0, '{', '}') else { break };
+            let trimmed = inner.trim_start();
+            let hoisted = ["tiny", "scriptsize", "footnotesize", "small"]
+                .iter()
+                .find_map(|sz| {
+                    trimmed
+                        .strip_prefix(&format!("\\{}", sz))
+                        .filter(|r| !r.starts_with(|c: char| c.is_ascii_alphabetic()))
+                        .map(|rest| (sz, rest.to_string()))
+                });
+            if let Some((sz, rest)) = hoisted {
+                let tail = s[open..].chars().skip(end).collect::<String>();
+                s = format!("{}{{\\{}\\mbox{{{}}}}}{}", &s[..pos], sz, rest, tail);
+            }
+            from = pos + 6;
+        }
+    }
     s = split_mbox(&s);
     s = s.replace("\\mbox", "\\text");
     s = s.replace("\\\"", "\"");
