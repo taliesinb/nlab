@@ -652,8 +652,38 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
         .to_string();
     // raw LaTeX-style theorem environments in prose (as opposed to the
     // +-- fences), optionally carrying a \label{Id}
-    const ENVS: &str =
-        "proposition|theorem|lemma|corollary|definition|example|remark|note|proof";
+    const ENVS: &str = "proposition|theorem|lemma|corollary|definition|\
+example|remark|note|proof|prop|prpn|thm|lem|cor|defn|rmk|exmp";
+    // \begin{center}..\end{center} wrappers are transparent for us
+    let src = regex::Regex::new(r"\\(begin|end)\{centre?\}")
+        .unwrap()
+        .replace_all(&src, "")
+        .to_string();
+    // \begin{imagefromfile} carries a JSON-ish body naming an uploaded
+    // file; render like any other stored image
+    let img_env_re = regex::Regex::new(
+        r"(?s)\\begin\{imagefromfile\}(.*?)\\end\{imagefromfile\}",
+    )
+    .unwrap();
+    let src = img_env_re
+        .replace_all(&src, |c: &regex::Captures| {
+            let body = &c[1];
+            let name = regex::Regex::new(r#""file_name"\s*:\s*"([^"]+)""#)
+                .unwrap()
+                .captures(body)
+                .map(|m| m[1].to_string());
+            match name {
+                Some(n) if files_root().join(&n).exists() => {
+                    stash.put(format!("#nlab-image(\"files/{}\")", n))
+                }
+                Some(n) => stash.put(format!(
+                    "#link(\"https://ncatlab.org/nlab/files/{}\")[(figure)]",
+                    n.replace(' ', "+")
+                )),
+                None => String::new(),
+            }
+        })
+        .to_string();
     // one sequential pass so a stray \end (author error) is the one
     // dropped, not the document's final legitimate close
     let env_re = regex::Regex::new(&format!(
@@ -675,13 +705,13 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
             env_depth += 1;
             let (kind, style) = match &c[2] {
                 "proof" => ("Proof", "proof"),
-                "proposition" => ("Proposition", "num"),
-                "theorem" => ("Theorem", "num"),
-                "lemma" => ("Lemma", "num"),
-                "corollary" => ("Corollary", "num"),
-                "definition" => ("Definition", "num"),
-                "example" => ("Example", "num"),
-                "remark" => ("Remark", "num"),
+                "proposition" | "prop" | "prpn" => ("Proposition", "num"),
+                "theorem" | "thm" => ("Theorem", "num"),
+                "lemma" | "lem" => ("Lemma", "num"),
+                "corollary" | "cor" => ("Corollary", "num"),
+                "definition" | "defn" => ("Definition", "num"),
+                "example" | "exmp" => ("Example", "num"),
+                "remark" | "rmk" => ("Remark", "num"),
                 _ => ("Note", "num"),
             };
             let id_arg = c
