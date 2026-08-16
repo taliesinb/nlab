@@ -1185,7 +1185,9 @@ fn spacing_from_opts(opts: &str) -> (f64, f64) {
                         let n = len_pt(inner.trim_end_matches('}'));
                         (n - 16.0).max(6.0)
                     } else if v.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+' || c == '.') {
-                        len_pt(v).max(2.0)
+                        // negative seps (xy `@C=-5pt`) pack columns
+                        // flush; fletcher can't overlap, so floor at 0
+                        len_pt(v).max(0.0)
                     } else {
                         cur
                     }
@@ -1393,9 +1395,11 @@ fn resolve(c: &Coord, anchors: &std::collections::HashMap<String, (f64, f64)>) -
             let mut parts = n.split('@');
             let base = parts.next().unwrap_or(n);
             let p = anchors.get(base).copied()?;
+            // xy point offsets default to mm (2.845pt); nominal
+            // 34pt/40pt grid steps turn them into fractional cells
             let dx: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
             let dy: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-            Some((p.0 - dy / 40.0, p.1 + dx / 50.0))
+            Some((p.0 - dy * 2.845 / 34.0, p.1 + dx * 2.845 / 40.0))
         }
     }
 }
@@ -1801,7 +1805,7 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
                     // carriers measure pos along the visible segment
                     let (mut x1, mut y1) = (grid.x(f.1), grid.y(f.0));
                     let (mut x2, mut y2) = (grid.x(t.1), grid.y(t.0));
-                    if a.bend.is_none() {
+                    if a.bend.is_none() && a.sagitta.is_none() {
                         let (cdx, cdy) = (x2 - x1, y2 - y1);
                         let half = |m: &std::collections::HashMap<(i32, i32), f64>,
                                     p: (f64, f64)| {
@@ -1836,6 +1840,10 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
                             / (2.0 * th.sin().abs().max(0.05));
                         px += nx * sag * bend.signum();
                         py += ny * sag * bend.signum();
+                    } else if let Some(s) = a.sagitta {
+                        // xy arcs: the bulge is the sagitta itself
+                        px += nx * s;
+                        py += ny * s;
                     }
                     if let Some(sh) = a.shift {
                         px += nx * sh;
@@ -2378,11 +2386,15 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
             fmt_f(*r)
         ));
     }
+    // fletcher's default node inset pads every column by ~6pt a side,
+    // putting a floor under tight layouts like `@C=-5pt` dot rows
+    let inset = if colsp < 8.0 { "\n  node-inset: 1pt," } else { "" };
     Ok((
         format!(
-            "#diagram(\n  spacing: ({}pt, {}pt),\n{}\n)\n",
+            "#diagram(\n  spacing: ({}pt, {}pt),{}\n{}\n)\n",
             fmt_f(colsp),
             fmt_f(rowsp),
+            inset,
             lines.join("\n")
         ),
         warnings,
@@ -2668,6 +2680,14 @@ fn clean_tex(s: &str) -> String {
             }
         })
         .to_string();
+    // a size switch leading an \mbox scopes over plain text, where
+    // mitex would leave it as literal words: hoist it outside
+    s = regex::Regex::new(
+        r"\\mbox\{\s*\\(tiny|scriptsize|footnotesize|small)\b([^{}]*)\}",
+    )
+    .unwrap()
+    .replace_all(&s, "{\\$1\\mbox{$2}}")
+    .to_string();
     s = split_mbox(&s);
     s = s.replace("\\mbox", "\\text");
     s = s.replace("\\\"", "\"");

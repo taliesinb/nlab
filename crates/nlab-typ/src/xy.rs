@@ -411,7 +411,9 @@ fn style_opts(style: &str) -> Vec<String> {
     if s.is_empty() {
         return vec!["phantom".into()];
     }
-    if s.contains("(->") || s.contains("(-->") {
+    // hooks arrive as `^{(}->` / `_{(}->`: the hook glyph in braces
+    let unbraced: String = s.chars().filter(|c| *c != '{' && *c != '}').collect();
+    if unbraced.contains("(->") || unbraced.contains("(-->") {
         return if s.starts_with('_') {
             vec!["hook'".into()]
         } else {

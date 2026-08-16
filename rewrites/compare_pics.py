@@ -92,7 +92,8 @@ def render(block: str) -> pathlib.Path | None:
     # auto-size the probe page instead of the 17cm article layout
     typ.write_text(r.stdout.replace(
         '#set page(width: 17cm, height: 25cm, margin: 1.6cm, fill: white, numbering: "1")',
-        "#set page(width: auto, height: auto, margin: 10pt, fill: white)",
+        # roomy margin: \mathclap labels overflow their column's box
+        "#set page(width: auto, height: auto, margin: 24pt, fill: white)",
     ))
     c = subprocess.run(
         ["typst", "compile", "--format", "svg", str(typ), str(svg)],

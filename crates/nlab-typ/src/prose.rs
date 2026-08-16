@@ -592,6 +592,15 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let negthinspace = scope-or("negthinspace", none)
 #let mitexcite = scope-or("mitexcite", none)
 #let mitexcolor = scope-or("mitexcolor", none)
+#let mitexsizetiny = scope-or("mitexsizetiny", it => text(size: 0.5em, it))
+#let mitexsizescript = scope-or("mitexsizescript", it => text(size: 0.7em, it))
+#let mitexsizefoot = scope-or("mitexsizefoot", it => text(size: 0.8em, it))
+#let mitexsizesmall = scope-or("mitexsizesmall", it => text(size: 0.9em, it))
+#let mitexsizelarge = scope-or("mitexsizelarge", it => text(size: 1.2em, it))
+#let mitexsizeLarge = scope-or("mitexsizeLarge", it => text(size: 1.44em, it))
+#let mitexsizeLARGE = scope-or("mitexsizeLARGE", it => text(size: 1.73em, it))
+#let mitexsizehuge = scope-or("mitexsizehuge", it => text(size: 2.07em, it))
+#let mitexsizeHuge = scope-or("mitexsizeHuge", it => text(size: 2.49em, it))
 #let mitexsim = scope-or("mitexsim", math.scripts(sym.tilde.op))
 #let mitexsimeq = scope-or("mitexsimeq", math.scripts(sym.tilde.eq))
 #let mitexbacksimeq = scope-or("mitexbacksimeq", math.scripts(sym.tilde.eq.rev))
@@ -614,7 +623,9 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let rotatebox = scope-or("rotatebox", (deg, it) => it)
 #let raisebox = scope-or("raisebox", (d, it) => it)
 #let boxed = scope-or("boxed", it => box(stroke: 0.5pt, inset: 2.5pt, $it$))
-#let fbox = it => box(stroke: 0.5pt, inset: (x: 6pt, y: 5pt), it)
+// explicit size: a box inside an equation inside a fletcher node has
+// its inset-derived height collapsed, cropping ascenders/descenders
+#let fbox = it => context { let sz = measure(it); box(stroke: 0.5pt, width: sz.width + 12pt, height: sz.height + 10pt, align(center + horizon, it)) }
 #let textrm = scope-or("textrm", it => math.upright(it))
 #let textup = scope-or("textup", it => math.upright(it))
 #let textit = scope-or("textit", it => math.italic(it))
