@@ -1071,8 +1071,18 @@ fn finish_node(
     } else if circle && draw {
         // circled node: draw the circle ourselves at a known radius so
         // wires can land exactly on the rim
-        let est = crate::tikzcd::est_halfwidth_pt(trimmed) * node_scale;
-        let r_pt = est.max(4.6 * node_scale) + inner_sep.unwrap_or(1.5) + 0.8;
+        let bare = trimmed
+            .trim_matches(|c| c == '$' || c == '{' || c == '}' || c == ' ');
+        let single_glyph = bare.len() <= 6
+            && bare.trim_start_matches('\\').chars().all(|c| c.is_ascii_alphabetic())
+            && !bare.is_empty();
+        let r_pt = if single_glyph {
+            // one letter: half-diagonal of ~6x8pt glyph metrics
+            5.0 * node_scale + inner_sep.unwrap_or(1.5) + 0.5
+        } else {
+            let est = crate::tikzcd::est_halfwidth_pt(trimmed) * node_scale;
+            est.max(4.6 * node_scale) + inner_sep.unwrap_or(1.5) + 0.8
+        };
         hw = r_pt / unit;
         hh = hw;
         round = true;
