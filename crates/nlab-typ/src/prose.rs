@@ -750,6 +750,15 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
     [(ref)]
   }
 }
+// framed/painted text patch with real margins: inset-only boxes
+// collapse around equations, so measure and size explicitly
+#let nlab-tbox(strokev, fillv, it) = {
+  set text(top-edge: "bounds", bottom-edge: "bounds")
+  context {
+    let sz = measure(it)
+    box(stroke: strokev, fill: fillv, width: sz.width + 12pt, height: sz.height + 9pt, align(center + horizon, it))
+  }
+}
 // xy \overset{\mathclap{lab}}{base}: the label takes no room; arrows
 // aim at base. Float lab just past base's edge, measured with bounds
 // edges (inline equations otherwise under-report tall ink).
@@ -891,7 +900,12 @@ terminology|notn|notation|conjecture|assumption|exercise";
                 Some((code, _)) => {
                     stash.put(format!("#nlab-diagram[#{}]", code))
                 }
-                None => c[0].to_string(),
+                // outside the vocabulary: show the source as code
+                // rather than letting tikz markup leak into prose
+                None => stash.put(format!(
+                    "#block(fill: luma(96%), inset: 8pt, radius: 4pt)[#raw({:?}, lang: \"latex\")]",
+                    c[0].to_string()
+                )),
             }
         })
         .to_string();

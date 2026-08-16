@@ -64,8 +64,9 @@ struct NamedNode {
 const UNIT_PT: f64 = 19.0;
 const UNIT_PT_GRAPH: f64 = 28.45;
 
-const COLORS: [&str; 9] = [
-    "white", "black", "red", "blue", "green", "orange", "gray", "purple", "olive",
+const COLORS: [&str; 14] = [
+    "white", "black", "red", "blue", "green", "orange", "gray", "purple",
+    "olive", "teal", "yellow", "navy", "lime", "maroon",
 ];
 
 /// Options parsed from a `[...]` list.
@@ -87,7 +88,33 @@ struct Opts {
     place: Option<String>, // above/below/left/right + combos
     xshift: f64,
     yshift: f64,
-    rotate: f64, // degrees
+    rotate: f64,             // degrees
+    out_ang: Option<f64>,    // to[out=..] departure angle, degrees
+    in_ang: Option<f64>,     // to[in=..] arrival angle, degrees
+    underlay: Option<f64>,   // preaction white-line width, pt (crossing gap)
+    mid_arrow: bool,         // decoration mark: arrowhead mid-segment
+    latex_tip: bool,         // >=latex / >=stealth: filled arrowheads
+}
+
+/// tikz color expressions: plain names plus `blue!15` tints.
+fn map_color(s: &str) -> Option<String> {
+    let s = s.trim();
+    fn base_of(b: &str) -> Option<&str> {
+        match b {
+            "violet" => return Some("purple"),
+            "cyan" => return Some("aqua"),
+            "magenta" => return Some("fuchsia"),
+            "brown" => return Some("maroon"),
+            _ => {}
+        }
+        COLORS.contains(&b).then_some(b)
+    }
+    if let Some((base, rest)) = s.split_once('!') {
+        let base = base_of(base)?;
+        let pct: f64 = rest.split('!').next()?.trim().parse().ok()?;
+        return Some(format!("{}.lighten({:.0}%)", base, (100.0 - pct).clamp(0.0, 100.0)));
+    }
+    base_of(s).map(String::from)
 }
 
 /// Evaluate `45+240`-style +/- chains (tikz polar angles use them).
@@ -154,18 +181,21 @@ fn extract_styles(opts: &str) -> (String, HashMap<String, String>) {
                 let mut depth = 0i32;
                 while j < b.len() {
                     match b[j] {
-                        '{' => depth += 1,
+                        '{' => {
+                            depth += 1;
+                            if depth > 1 {
+                                spec.push('{');
+                            }
+                        }
                         '}' => {
                             depth -= 1;
                             if depth == 0 {
                                 j += 1;
                                 break;
                             }
+                            spec.push('}');
                         }
-                        _ => spec.push(b[j]),
-                    }
-                    if depth > 1 {
-                        // keep nested braces verbatim
+                        c => spec.push(c),
                     }
                     j += 1;
                 }
@@ -238,11 +268,31 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
         } else if p == "verythick" {
             o.width = Some(1.2);
         } else if let Some(v) = p.strip_prefix("fill=") {
-            if COLORS.contains(&v) {
-                o.fill = Some(v.to_string());
+            if let Some(c) = map_color(v) {
+                o.fill = Some(c);
             }
-        } else if COLORS.contains(&p.as_str()) {
-            o.color = Some(p);
+        } else if let Some(c) = map_color(&p) {
+            o.color = Some(c);
+        } else if let Some(v) = p.strip_prefix("out=") {
+            o.out_ang = eval_num(v);
+        } else if let Some(v) = p.strip_prefix("in=") {
+            o.in_ang = eval_num(v);
+        } else if p.starts_with("preaction={draw=white") || p.starts_with("preaction={decorate") {
+            if p.contains("draw=white") {
+                let w = p
+                    .split("linewidth=")
+                    .nth(1)
+                    .and_then(|v| len_pt(v.trim_end_matches('}')))
+                    .unwrap_or(4.0);
+                o.underlay = Some(w);
+            }
+        } else if p.starts_with("decoration={markings") || p == "postaction={decorate}" {
+            // mid-line arrowhead decorations
+            if p.contains("markings") {
+                o.mid_arrow = true;
+            }
+        } else if let Some(v) = p.strip_prefix(">=") {
+            o.latex_tip = matches!(v, "latex" | "stealth" | "Latex" | "Stealth");
         } else if p == "->" {
             o.arrow_end = true;
         } else if p == "<-" {
@@ -295,7 +345,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
     let body = strip_tex_comments(body);
     let body = body.as_str();
     let env_opts = strip_tex_comments(env_opts);
-    let (env_opts, styles) = extract_styles(&env_opts);
+    let (env_opts, mut styles) = extract_styles(&env_opts);
     let unit = if body.contains("\\node") {
         UNIT_PT_GRAPH
     } else {
@@ -311,6 +361,10 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
         color: env.color.unwrap_or_else(|| "black".into()),
         width: env.width.unwrap_or(0.4),
     };
+    let node_scale = styles
+        .get("every node")
+        .map(|sp| parse_opts(sp, unit).scale.0)
+        .unwrap_or(1.0);
     let b: Vec<char> = body.chars().collect();
     let mut i = 0usize;
     let mut out: Vec<String> = Vec::new();
@@ -399,9 +453,61 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             continue;
         }
         if starts(&b, i, "\\tikzstyle") {
-            let (_, ni) = read_stmt(&b, i);
+            // \tikzstyle{name}=[spec]
+            let (stmt, ni) = read_stmt(&b, i);
             i = ni;
-            warnings.push("tikzstyle".into());
+            if let Some((name, spec)) = stmt
+                .trim_start_matches("\\tikzstyle")
+                .trim()
+                .split_once('=')
+            {
+                let name = name.trim().trim_matches(|c| c == '{' || c == '}').to_string();
+                let spec = spec.trim().trim_matches(|c| c == '[' || c == ']').to_string();
+                styles.insert(name, spec);
+            }
+            continue;
+        }
+        if starts(&b, i, "\\tikzset") {
+            // brace group, no trailing semicolon: read it balanced
+            i += "\\tikzset".len();
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            if b.get(i) == Some(&'{') {
+                let mut depth = 0i32;
+                let start = i + 1;
+                while i < b.len() {
+                    match b[i] {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let inner: String = b[start..i].iter().collect();
+                i += 1;
+                let (_, defs) = extract_styles(&inner);
+                styles.extend(defs);
+            }
+            continue;
+        }
+        if starts(&b, i, "\\usetikzlibrary") {
+            // no trailing semicolon: skip the word and its {..} group
+            i += "\\usetikzlibrary".len();
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            if b.get(i) == Some(&'{') {
+                while i < b.len() && b[i] != '}' {
+                    i += 1;
+                }
+                i += 1;
+            }
             continue;
         }
         if starts(&b, i, "\\coordinate") || starts(&b, i, "\\node") {
@@ -409,7 +515,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             i += if is_coord { 11 } else { 5 };
             let (stmt, ni) = read_stmt(&b, i);
             i = ni;
-            match parse_node_stmt(&stmt, frames.last().unwrap(), is_coord, unit, &styles) {
+            match parse_node_stmt(&stmt, frames.last().unwrap(), is_coord, unit, &styles, node_scale) {
                 Ok((name, nn, op)) => {
                     if let Some(n) = name {
                         nodes.insert(n, nn);
@@ -427,7 +533,37 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             i += 5;
             let (optxt, ni) = read_bracket(&b, i);
             i = ni;
+            // expand style names through the dictionary (depth-aware split)
+            let optxt = {
+                let inner = optxt.trim_matches(|c| c == '[' || c == ']');
+                let mut parts: Vec<String> = Vec::new();
+                let mut depth = 0i32;
+                let mut cur = String::new();
+                for c in inner.chars() {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => depth -= 1,
+                        ',' if depth == 0 => {
+                            parts.push(std::mem::take(&mut cur));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    cur.push(c);
+                }
+                parts.push(cur);
+                let expanded: Vec<String> = parts
+                    .into_iter()
+                    .map(|t| {
+                        let tt = t.trim();
+                        let base = tt.strip_prefix("style=").unwrap_or(tt).trim();
+                        styles.get(base).cloned().unwrap_or(t)
+                    })
+                    .collect();
+                format!("[{}]", expanded.join(","))
+            };
             let mut o = parse_opts(&optxt, unit);
+            o.latex_tip = o.latex_tip || env.latex_tip;
             let frame = frames.last().unwrap().clone();
             if o.color.is_none() {
                 o.color = Some(frame.color.clone());
@@ -467,6 +603,7 @@ fn parse_node_stmt(
     is_coord: bool,
     unit: f64,
     styles: &HashMap<String, String>,
+    node_scale: f64,
 ) -> Result<(Option<String>, NamedNode, Option<String>), String> {
     let b: Vec<char> = stmt.chars().collect();
     let mut i = 0usize;
@@ -525,6 +662,15 @@ fn parse_node_stmt(
     let (x, y) = frame.apply(p);
     i = j + 1;
     i = skip_ws(&b, i);
+    // the name may also follow the coordinate: \node at (x,y) (n) {..}
+    if name.is_none() && b.get(i) == Some(&'(') {
+        let mut j = i + 1;
+        while j < b.len() && b[j] != ')' {
+            j += 1;
+        }
+        name = Some(b[i + 1..j].iter().collect::<String>().trim().to_string());
+        i = skip_ws(&b, j + 1);
+    }
     let mut body = String::new();
     if b.get(i) == Some(&'{') {
         let mut depth = 0i32;
@@ -589,8 +735,8 @@ fn parse_node_stmt(
     if is_coord || trimmed.is_empty() {
         return Ok((name, NamedNode { x, y, hw: 0.0, hh: 0.0 }, None));
     }
-    let mut hw = (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
-    let mut hh = 8.0 / unit;
+    let mut hw = node_scale * (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
+    let mut hh = node_scale * 8.0 / unit;
     let op = if rectangle && draw {
         // boxed node (string-diagram morphisms)
         hw += 3.0 / unit;
@@ -600,7 +746,7 @@ fn parse_node_stmt(
             x,
             y,
             fill.unwrap_or_else(|| "white".into()),
-            node_content(trimmed, None)
+            node_content_scaled(trimmed, None, node_scale)
         )
     } else if circle && draw {
         // circled node on a wire crossing
@@ -612,7 +758,7 @@ fn parse_node_stmt(
             y,
             fill.unwrap_or_else(|| "white".into()),
             inner_sep.unwrap_or(1.5),
-            node_content(trimmed, None)
+            node_content_scaled(trimmed, None, node_scale)
         )
     } else {
         // [above]/[below]/[left]/[right] shift off the coordinate
@@ -624,14 +770,14 @@ fn parse_node_stmt(
                 x + gx,
                 y + gy,
                 anchor,
-                node_content(trimmed, None)
+                node_content_scaled(trimmed, None, node_scale)
             )
         } else {
             format!(
                 "content(({:.3}, {:.3}), {})",
                 x,
                 y,
-                node_content(trimmed, None)
+                node_content_scaled(trimmed, None, node_scale)
             )
         }
     };
@@ -692,10 +838,17 @@ fn parse_path(
             if opts.dashed { "\"dashed\"" } else { "\"dotted\"" }
         )
     };
+    // tikz's default arrow tip is the thin "to" barb; only >=latex
+    // and friends fill a solid triangle
+    let tip = if opts.latex_tip {
+        "\">\", fill: black"
+    } else {
+        "\"straight\""
+    };
     let mark = match (opts.arrow_start, opts.arrow_end) {
-        (true, true) => ", mark: (start: \">\", end: \">\", fill: black)".to_string(),
-        (true, false) => ", mark: (start: \">\", fill: black)".to_string(),
-        (false, true) => ", mark: (end: \">\", fill: black)".to_string(),
+        (true, true) => format!(", mark: (start: {tip}, end: {tip})"),
+        (true, false) => format!(", mark: (start: {tip})"),
+        (false, true) => format!(", mark: (end: {tip})"),
         _ => String::new(),
     };
     let (cdx, cdy) = opts.canvas_shift;
@@ -742,7 +895,9 @@ fn parse_path(
         let (ux, uy) = (dx / len, dy / len);
         let border = if p.hw > 0.0 || p.hh > 0.0 {
             let k = (ux.abs() / p.hw.max(1e-6)).max(uy.abs() / p.hh.max(1e-6));
-            (1.0 / k) + 2.0 / unit
+            // wires TOUCH small round dots; text nodes keep a gap
+            let pad = if p.hw.max(p.hh) <= 3.5 / unit { 0.0 } else { 2.0 / unit };
+            (1.0 / k) + pad
         } else {
             0.0
         };
@@ -829,8 +984,10 @@ fn parse_path(
         }
         if rest.starts_with("to") || rest.starts_with("--") {
             i += 2;
-            // optional to[bend ...] options
+            // optional to[bend ...] / to[out=..,in=..] options
             let mut seg_bend = opts.bend;
+            let mut seg_out = opts.out_ang;
+            let mut seg_in = opts.in_ang;
             if b.get(i) == Some(&'[') {
                 let mut j = i;
                 while j < b.len() && b[j] != ']' {
@@ -839,6 +996,12 @@ fn parse_path(
                 let o = parse_opts(&b[i..=j.min(b.len() - 1)].iter().collect::<String>(), unit);
                 if o.bend != 0.0 {
                     seg_bend = o.bend;
+                }
+                if o.out_ang.is_some() {
+                    seg_out = o.out_ang;
+                }
+                if o.in_ang.is_some() {
+                    seg_in = o.in_ang;
                 }
                 i = j + 1;
             }
@@ -895,7 +1058,36 @@ fn parse_path(
             let p1 = trim(e, s0, opts.shorten_end / unit);
             let p0 = (p0.0 + cdx, p0.1 + cdy);
             let p1 = (p1.0 + cdx, p1.1 + cdy);
-            if seg_bend != 0.0 {
+            if let (Some(oa), Some(ia)) = (seg_out, seg_in) {
+                // tikz to[out=..,in=..]: cubic with tangent directions;
+                // control distance ~0.39 x chord (looseness 1)
+                let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
+                let d = 0.39 * dx.hypot(dy);
+                let (oa, ia) = (oa.to_radians(), ia.to_radians());
+                let c1 = (p0.0 + d * oa.cos(), p0.1 + d * oa.sin());
+                let c2 = (p1.0 + d * ia.cos(), p1.1 + d * ia.sin());
+                if let Some(w) = opts.underlay {
+                    // the white-underlay crossing trick: a fat white
+                    // stroke below erases whatever this wire crosses
+                    ops.push(format!(
+                        "bezier({}, {}, {}, {}, stroke: {}pt + white)",
+                        fmt_pt(p0),
+                        fmt_pt(p1),
+                        fmt_pt(c1),
+                        fmt_pt(c2),
+                        w
+                    ));
+                }
+                ops.push(format!(
+                    "bezier({}, {}, {}, {}, {}{})",
+                    fmt_pt(p0),
+                    fmt_pt(p1),
+                    fmt_pt(c1),
+                    fmt_pt(c2),
+                    stroke,
+                    mark
+                ));
+            } else if seg_bend != 0.0 {
                 // symmetric quadratic-ish bezier: control points offset
                 // perpendicular (left of travel = +90 deg CCW)
                 let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
@@ -915,13 +1107,37 @@ fn parse_path(
                     mark
                 ));
             } else {
-                ops.push(format!(
-                    "line({}, {}, {}{})",
-                    fmt_pt(p0),
-                    fmt_pt(p1),
-                    stroke,
-                    mark
-                ));
+                if let Some(w) = opts.underlay {
+                    ops.push(format!(
+                        "line({}, {}, stroke: {}pt + white)",
+                        fmt_pt(p0),
+                        fmt_pt(p1),
+                        w
+                    ));
+                }
+                if opts.mid_arrow {
+                    // decoration mark: arrowhead riding at ~60%
+                    let m = (
+                        p0.0 + 0.62 * (p1.0 - p0.0),
+                        p0.1 + 0.62 * (p1.1 - p0.1),
+                    );
+                    ops.push(format!(
+                        "line({}, {}, {}, mark: (end: {}))",
+                        fmt_pt(p0),
+                        fmt_pt(m),
+                        stroke,
+                        tip
+                    ));
+                    ops.push(format!("line({}, {}, {})", fmt_pt(m), fmt_pt(p1), stroke));
+                } else {
+                    ops.push(format!(
+                        "line({}, {}, {}{})",
+                        fmt_pt(p0),
+                        fmt_pt(p1),
+                        stroke,
+                        mark
+                    ));
+                }
             }
             if let Some((tex, lo)) = pending_label.take() {
                 let mx = (p0.0 + p1.0) / 2.0 + lo.xshift;
@@ -1059,8 +1275,12 @@ fn place_anchor(place: Option<&str>, unit: f64) -> (&'static str, f64, f64) {
 /// nesting) around a `$math$` node body. `default_fill` is the scope's
 /// inherited color (tikz nodes inherit the ambient draw color).
 fn node_content(body: &str, default_fill: Option<&str>) -> String {
+    node_content_scaled(body, default_fill, 1.0)
+}
+
+fn node_content_scaled(body: &str, default_fill: Option<&str>, node_scale: f64) -> String {
     let mut fill: Option<String> = None;
-    let mut size = 1.0f64;
+    let mut size = node_scale;
     let mut boxed = false;
     let mut bg: Option<String> = None;
     let mut s = body.trim().to_string();
@@ -1164,8 +1384,9 @@ fn node_content(body: &str, default_fill: Option<&str>) -> String {
         inner = format!("text(fill: {}, {})", f, inner);
     }
     if boxed || bg.is_some() {
+        // measured box: inset-only boxes collapse around equations
         inner = format!(
-            "box(stroke: {}, fill: {}, inset: (x: 5pt, y: 4pt), {})",
+            "nlab-tbox({}, {}, {})",
             if boxed { "0.5pt + black" } else { "none" },
             bg.unwrap_or_else(|| "white".into()),
             inner
