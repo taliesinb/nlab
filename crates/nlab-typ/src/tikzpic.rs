@@ -154,7 +154,14 @@ fn eval_coord(
     nodes: &HashMap<String, NamedNode>,
     frame: &Frame,
 ) -> Option<(f64, f64)> {
-    let e = expr.trim().trim_start_matches('$').trim_end_matches('$').trim();
+    let e: String = expr
+        .trim()
+        .trim_start_matches('$')
+        .trim_end_matches('$')
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let e = e.as_str();
     // linear part of the frame (offsets scale/rotate but don't move)
     let origin = frame.apply((0.0, 0.0));
     let lin = |p: (f64, f64)| {
@@ -286,7 +293,14 @@ fn extract_styles(opts: &str) -> (String, HashMap<String, String>) {
         let rest: String = b[i..].iter().collect();
         if let Some(k) = rest.find("/.style=") {
             // name runs back to the previous top-level comma
-            let name: String = rest[..k].rsplit(',').next().unwrap_or("").trim().to_string();
+            let name: String = rest[..k]
+                .rsplit(',')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_matches(|c| c == '[' || c == ']' || c == '{' || c == '}')
+                .trim()
+                .to_string();
             let mut j = i + k + "/.style=".len();
             while j < b.len() && b[j].is_whitespace() {
                 j += 1;
@@ -619,17 +633,38 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             continue;
         }
         if starts(&b, i, "\\tikzstyle") {
-            // \tikzstyle{name}=[spec]
-            let (stmt, ni) = read_stmt(&b, i);
-            i = ni;
-            if let Some((name, spec)) = stmt
-                .trim_start_matches("\\tikzstyle")
-                .trim()
-                .split_once('=')
-            {
-                let name = name.trim().trim_matches(|c| c == '{' || c == '}').to_string();
-                let spec = spec.trim().trim_matches(|c| c == '[' || c == ']').to_string();
-                styles.insert(name, spec);
+            // \tikzstyle{name}=[spec] - possibly without a trailing
+            // semicolon, so read exactly its own tokens
+            i += "\\tikzstyle".len();
+            let mut name = String::new();
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            if b.get(i) == Some(&'{') {
+                i += 1;
+                while i < b.len() && b[i] != '}' {
+                    name.push(b[i]);
+                    i += 1;
+                }
+                i += 1;
+            }
+            while i < b.len() && (b[i].is_whitespace() || b[i] == '=') {
+                i += 1;
+            }
+            let mut spec = String::new();
+            if b.get(i) == Some(&'[') {
+                i += 1;
+                while i < b.len() && b[i] != ']' {
+                    spec.push(b[i]);
+                    i += 1;
+                }
+                i += 1;
+            }
+            while i < b.len() && (b[i].is_whitespace() || b[i] == ';') {
+                i += 1;
+            }
+            if !name.trim().is_empty() {
+                styles.insert(name.trim().to_string(), spec);
             }
             continue;
         }
@@ -970,6 +1005,7 @@ fn finish_node(
     }
     let (mut fill, mut draw, mut circle, mut rectangle, mut inner_sep) =
         (None::<String>, false, false, false, None::<f64>);
+    let mut invisible = false;
     for t in &toks {
         let t = t.replace(' ', "");
         if let Some(v) = t.strip_prefix("fill=") {
@@ -978,6 +1014,8 @@ fn finish_node(
             }
         } else if t == "fill" {
             fill = Some("black".into());
+        } else if t == "opacity=0" || t == "opacity=0.0" {
+            invisible = true;
         } else if t == "draw" {
             draw = true;
         } else if let Some(v) = t.strip_prefix("draw=") {
@@ -991,6 +1029,11 @@ fn finish_node(
         }
     }
     let trimmed = body.trim();
+    if invisible {
+        // opacity=0 phantoms exist only for alignment
+        let hw = node_scale * (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
+        return Ok((name, NamedNode { x, y, hw, hh: node_scale * 8.0 / unit, round: false }, None));
+    }
     if circle && trimmed.is_empty() && (fill.is_some() || draw) {
         // a styled dot (quiver `bn` nodes and friends)
         let r = (inner_sep.unwrap_or(1.8) + 1.0) / unit;
@@ -1026,20 +1069,20 @@ fn finish_node(
             node_content_scaled(trimmed, None, node_scale)
         )
     } else if circle && draw {
-        // circled node: extents match the drawn circle frame, whose
-        // radius is the padded content's half-diagonal
+        // circled node: draw the circle ourselves at a known radius so
+        // wires can land exactly on the rim
         let est = crate::tikzcd::est_halfwidth_pt(trimmed) * node_scale;
-        let pad = inner_sep.unwrap_or(1.5) + 1.0;
-        hw = (est.hypot(5.2 * node_scale) + pad) / unit;
+        let r_pt = est.max(4.6 * node_scale) + inner_sep.unwrap_or(1.5) + 0.8;
+        hw = r_pt / unit;
         hh = hw;
         round = true;
         format!(
-            "content(({:.3}, {:.3}), frame: \"circle\", stroke: 0.5pt + black, fill: {}, padding: {}pt, {})",
-            x,
-            y,
-            fill.unwrap_or_else(|| "white".into()),
-            inner_sep.unwrap_or(1.5),
-            node_content_scaled(trimmed, None, node_scale)
+            "circle(({x:.3}, {y:.3}), radius: {r:.3}, stroke: 0.5pt + black, fill: {f})\n    content(({x:.3}, {y:.3}), {c})",
+            x = x,
+            y = y,
+            r = hw,
+            f = fill.unwrap_or_else(|| "white".into()),
+            c = node_content_scaled(trimmed, None, node_scale)
         )
     } else {
         // [above]/[below]/[left]/[right] shift off the coordinate
