@@ -2559,6 +2559,12 @@ fn split_mbox(s: &str) -> String {
 /// Drop wrappers mitex has no handler for; keep their visible argument.
 fn clean_tex(s: &str) -> String {
     let mut s = emit::fix_itex_builtins(s);
+    // old-style declaration switches inside \mbox{..} stringify as
+    // literal mitexbold(..) calls downstream; they only style
+    s = regex::Regex::new(r"\\(bf|it|rm|sf|tt)\b")
+        .unwrap()
+        .replace_all(&s, "")
+        .to_string();
     // \rotatebox's optional [origin=c] argument confuses the 2-arg
     // handle; the origin never matters at our sizes
     s = regex::Regex::new(r"\\rotatebox\[[^\]]*\]")

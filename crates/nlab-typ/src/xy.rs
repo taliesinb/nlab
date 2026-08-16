@@ -73,6 +73,33 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                 _ => break,
             }
         }
+        // explicit anchor targets `"s"; "t"` may appear right after the
+        // decorations or after the labels
+        let read_anchors = |b: &[char], start: usize| -> Option<(String, String, usize)> {
+            let mut i = start;
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            let read_q = |b: &[char], mut i: usize| -> Option<(String, usize)> {
+                if b.get(i) != Some(&'"') {
+                    return None;
+                }
+                let mut j = i + 1;
+                let mut t = String::new();
+                while j < b.len() && b[j] != '"' {
+                    t.push(b[j]);
+                    j += 1;
+                }
+                Some((t, j + 1))
+            };
+            let (src_a, ni) = read_q(b, i)?;
+            let mut k = ni;
+            while k < b.len() && (b[k].is_whitespace() || b[k] == ';') {
+                k += 1;
+            }
+            let (dst_a, ni2) = read_q(b, k)?;
+            Some((src_a, dst_a, ni2))
+        };
         if b.get(i) == Some(&'[') {
             let mut j = i + 1;
             while j < b.len() && b[j] != ']' {
@@ -80,15 +107,34 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                 j += 1;
             }
             i = j + 1;
+        } else if let Some((sa, ta, ni)) = read_anchors(&b, i) {
+            opts.push(format!("from={}", sa));
+            opts.push(format!("to={}", ta));
+            i = ni;
         }
-        // labels: (^|_|,|) [-] then {group} | \command | single char
-        while let Some(&m) = b.get(i) {
+        // labels: (^|_|,|) [-<>]* then {group} | \command | single char,
+        // optionally suffixed ="name"; xy tolerates whitespace between
+        // the arrow and its labels (and between labels)
+        loop {
+            let mut k = i;
+            while k < b.len() && b[k].is_whitespace() {
+                k += 1;
+            }
+            let Some(&m) = b.get(k) else { break };
             if m != '^' && m != '_' && m != '|' {
                 break;
             }
-            i += 1;
-            if b.get(i) == Some(&'-') {
-                i += 1; // "at midpoint" position modifier: our default
+            i = k + 1;
+            // position modifiers: - midpoint (default), < toward the
+            // start, > toward the end (repeats push further)
+            let mut toward = 0i32;
+            while matches!(b.get(i), Some('-') | Some('<') | Some('>')) {
+                match b[i] {
+                    '<' => toward -= 1,
+                    '>' => toward += 1,
+                    _ => {}
+                }
+                i += 1;
             }
             let tex = if b.get(i) == Some(&'{') {
                 let (t, end) = balanced(&b, i, '{', '}');
@@ -109,12 +155,47 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
             } else {
                 break;
             };
+            // ="name" names the label as an anchor
+            let mut name = None;
+            if b.get(i) == Some(&'=') && b.get(i + 1) == Some(&'"') {
+                let mut j = i + 2;
+                let mut t = String::new();
+                while j < b.len() && b[j] != '"' {
+                    t.push(b[j]);
+                    j += 1;
+                }
+                i = j + 1;
+                name = Some(t);
+            }
             let quoted = tex.replace('"', "");
-            labels.push(match m {
-                '_' => format!("\"{{{}}}\"{{swap}}", quoted),
-                '|' => format!("\"{{{}}}\"{{description}}", quoted),
-                _ => format!("\"{{{}}}\"", quoted),
+            let mut mods: Vec<String> = Vec::new();
+            match m {
+                '_' => mods.push("swap".into()),
+                '|' => mods.push("description".into()),
+                _ => {}
+            }
+            match toward {
+                t if t <= -3 => mods.push("very near start".into()),
+                -2 | -1 => mods.push("near start".into()),
+                1 | 2 => mods.push("near end".into()),
+                t if t >= 3 => mods.push("very near end".into()),
+                _ => {}
+            }
+            if let Some(n) = name {
+                mods.push(format!("name={}", n));
+            }
+            labels.push(if mods.is_empty() {
+                format!("\"{{{}}}\"", quoted)
+            } else {
+                format!("\"{{{}}}\"{{{}}}", quoted, mods.join(", "))
             });
+        }
+        if !opts.iter().any(|o| o.starts_with("from=")) {
+            if let Some((sa, ta, ni)) = read_anchors(&b, i) {
+                opts.push(format!("from={}", sa));
+                opts.push(format!("to={}", ta));
+                i = ni;
+            }
         }
         // description labels on a phantom carrier just sit on the line
         if opts.iter().any(|o| o == "phantom") {

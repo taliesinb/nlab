@@ -759,11 +759,14 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
                     _ => seps.push(format!("sep={}", &m[2])),
                 }
             }
-            let opt = if seps.is_empty() {
-                String::new()
-            } else {
-                format!("[{}]", seps.join(", "))
-            };
+            // xy grids default to equal 2pc separations both ways
+            if !seps.iter().any(|s| s.starts_with("column") || s.starts_with("sep")) {
+                seps.push("column sep=24pt".into());
+            }
+            if !seps.iter().any(|s| s.starts_with("row") || s.starts_with("sep")) {
+                seps.push("row sep=24pt".into());
+            }
+            let opt = format!("[{}]", seps.join(", "));
             format!(
                 "\\begin{{tikzcd}}{}{}\\end{{tikzcd}}",
                 opt,
