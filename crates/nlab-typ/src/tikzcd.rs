@@ -1908,7 +1908,14 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         std::collections::HashMap::new();
     for (r, c, tex) in &nodes {
         let cleaned = clean_tex(tex);
-        let content = if let Some((ph, vis)) = cell_phantom_clap(tex) {
+        let content = if let Some((over, lab, base)) = cell_attach_clap(tex) {
+            format!(
+                "nlab-satellite(mi({}), mi({}), {})",
+                emit::ts(&clean_tex(&base)),
+                emit::ts(&clean_tex(&lab)),
+                over,
+            )
+        } else if let Some((ph, vis)) = cell_phantom_clap(tex) {
             format!(
                 "context {{ box(width: measure(mi({})).width, align(center + horizon, mi({}))) }}",
                 emit::ts(&clean_tex(&ph)),
@@ -2463,6 +2470,50 @@ fn scalebox_label(tex: &str) -> (f64, String) {
 
 /// A cell that is entirely `\textcolor{spec}{content}` -> (typst color,
 /// content). Handles named colors and quiver rgb specs.
+/// A cell that is `\overset{\mathclap{LAB}}{BASE}` (or underset): xy
+/// gives the clap'd label no room at all - arrows aim at BASE's
+/// center and the label floats. Mirror that: BASE is the node, the
+/// label is a zero-size placed satellite.
+fn cell_attach_clap(tex: &str) -> Option<(bool, String, String)> {
+    let b: Vec<char> = tex.trim().chars().collect();
+    let skip_ws = |b: &[char], mut i: usize| -> usize {
+        while i < b.len() && b[i].is_whitespace() {
+            i += 1;
+        }
+        i
+    };
+    let mut i = skip_ws(&b, 0);
+    let braced = b.get(i) == Some(&'{');
+    if braced {
+        i = skip_ws(&b, i + 1);
+    }
+    let (over, wlen) = if b[i..].iter().take(8).collect::<String>() == "\\overset" {
+        (true, 8)
+    } else if b[i..].iter().take(9).collect::<String>() == "\\underset" {
+        (false, 9)
+    } else {
+        return None;
+    };
+    let (arg1, e1) = read_group(&b, skip_ws(&b, i + wlen), '{', '}')?;
+    let a1: Vec<char> = arg1.trim().chars().collect();
+    if a1.iter().take(9).collect::<String>() != "\\mathclap" {
+        return None;
+    }
+    let (lab, le) = read_group(&a1, skip_ws(&a1, 9), '{', '}')?;
+    if !a1[le..].iter().collect::<String>().trim().is_empty() {
+        return None;
+    }
+    let (base, e2) = read_group(&b, skip_ws(&b, e1), '{', '}')?;
+    let mut rest: String = b[e2..].iter().collect();
+    if braced {
+        rest = rest.trim_start().strip_prefix('}')?.to_string();
+    }
+    if !rest.trim().trim_start_matches("\\;").trim().is_empty() {
+        return None;
+    }
+    Some((over, lab, base))
+}
+
 /// The `{\phantom{A}}\hspace{-X}\mathclap{B}\hspace{+X}` idiom: B
 /// shown centered on a box as wide as A (X is hand-tuned to half A's
 /// TeX width, which our fonts won't reproduce - center it properly).
@@ -2758,7 +2809,7 @@ fn clean_tex(s: &str) -> String {
                 // wrapper would nest an equation and break \mathclap
                 rows.into_iter().next().unwrap()
             } else {
-                format!("\\begin{{matrix}}{}\\end{{matrix}}", rows.join(" \\\\ "))
+                format!("\\begin{{matrix}}{}\\end{{matrix}}", rows.join("\\\\"))
             }
         })
         .to_string();
@@ -2797,6 +2848,30 @@ fn clean_tex(s: &str) -> String {
     s = s.replace("\\mbox", "\\text");
     s = s.replace("\\\"", "\"");
     s = s.replace("\\rmfamily", "");
+    // \raisebox nudging attach labels: an UPWARD raise on an overset
+    // label doubles the visual gap in typst (ink moves, box stays), and
+    // the server renders show no net effect - strip it. Downward raises
+    // (underset labels pushed below crossing arrows) stay.
+    {
+        let mut from = 0usize;
+        while let Some(rel) = s[from..].find("\\raisebox{") {
+            let pos = from + rel;
+            let b: Vec<char> = s[pos + 9..].chars().collect();
+            let Some((amt, e1)) = read_group(&b, 0, '{', '}') else { break };
+            let mut k = e1;
+            while k < b.len() && b[k].is_whitespace() {
+                k += 1;
+            }
+            let Some((inner, e2)) = read_group(&b, k, '{', '}') else { break };
+            if !amt.trim().starts_with('-') {
+                let tail: String = b[e2..].iter().collect();
+                s = format!("{}{{{}}}{}", &s[..pos], inner, tail);
+                from = pos + 1;
+            } else {
+                from = pos + 9;
+            }
+        }
+    }
     for (cmd, keep_last_of) in [("\\mathcolor", 2), ("\\clap", 1)] {
         while let Some(pos) = s.find(cmd) {
             let b: Vec<char> = s[pos + cmd.len()..].chars().collect();

@@ -750,6 +750,20 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
     [(ref)]
   }
 }
+// xy \overset{\mathclap{lab}}{base}: the label takes no room; arrows
+// aim at base. Float lab just past base's edge, measured with bounds
+// edges (inline equations otherwise under-report tall ink).
+#let nlab-satellite(base, lab, over) = {
+  set text(top-edge: "bounds", bottom-edge: "bounds")
+  context {
+    let h = measure(lab).height
+    if over {
+      block(base + place(top + center, dy: -h - 3pt, lab))
+    } else {
+      block(base + place(bottom + center, dy: h + 3pt, lab))
+    }
+  }
+}
 #let nlab-anchor(id, body) = context {
   if query(label(id)).len() > 0 { link(label(id), body) } else { body }
 }
