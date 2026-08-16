@@ -98,6 +98,7 @@ struct Opts {
     mid_rev: bool,           // \arrowreversed: head points backward
     looseness: f64,          // control-point distance multiplier
     latex_tip: bool,         // >=latex / >=stealth: filled arrowheads
+    path_only: bool,         // \path: invisible, only decorations show
 }
 
 /// tikz color expressions: plain names plus `blue!15` tints.
@@ -465,6 +466,19 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
             o.yshift = len_pt(v).unwrap_or(0.0) / unit;
         } else if p == "auto" {
             o.place = Some("auto".into());
+        } else if let Some(v) = p.strip_prefix("anchor=") {
+            // node anchored at its own <v>: extends the opposite way
+            o.place = match v {
+                "south" => Some("above".into()),
+                "north" => Some("below".into()),
+                "east" => Some("left".into()),
+                "west" => Some("right".into()),
+                "southwest" => Some("aboveright".into()),
+                "southeast" => Some("aboveleft".into()),
+                "northwest" => Some("belowright".into()),
+                "northeast" => Some("belowleft".into()),
+                _ => o.place.take(),
+            };
         } else if matches!(
             p.as_str(),
             "above" | "below" | "left" | "right" | "aboveleft" | "aboveright"
@@ -680,9 +694,13 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             }
             continue;
         }
-        if starts(&b, i, "\\draw") || starts(&b, i, "\\fill") {
-            let is_fill = starts(&b, i, "\\fill");
-            i += 5;
+        if starts(&b, i, "\\draw") || starts(&b, i, "\\fill") || starts(&b, i, "\\path")
+            || starts(&b, i, "\\filldraw")
+        {
+            let is_filldraw = starts(&b, i, "\\filldraw");
+            let is_fill = starts(&b, i, "\\fill") && !is_filldraw;
+            let is_path = starts(&b, i, "\\path");
+            i += if is_filldraw { 9 } else { 5 };
             let (optxt, ni) = read_bracket(&b, i);
             i = ni;
             // expand style names through the dictionary (depth-aware split)
@@ -716,6 +734,10 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             };
             let mut o = parse_opts(&optxt, unit);
             o.latex_tip = o.latex_tip || env.latex_tip;
+            o.path_only = is_path;
+            if is_filldraw && o.fill.is_none() {
+                o.fill = o.color.clone().or_else(|| Some("black".into()));
+            }
             let frame = frames.last().unwrap().clone();
             if o.color.is_none() {
                 o.color = Some(frame.color.clone());
@@ -980,8 +1002,14 @@ fn finish_node(
         );
         return Ok((name, NamedNode { x, y, hw: r, hh: r, round: true }, Some(op)));
     }
-    if is_coord || trimmed.is_empty() {
+    if is_coord {
         return Ok((name, NamedNode { x, y, hw: 0.0, hh: 0.0, round: false }, None));
+    }
+    if trimmed.is_empty() {
+        // an empty \node still has its inner-sep box: plain edges to
+        // it stop short (lines land on disk rims drawn at the point)
+        let r = inner_sep.unwrap_or(3.3) / unit;
+        return Ok((name, NamedNode { x, y, hw: r, hh: r, round: false }, None));
     }
     let mut hw = node_scale * (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
     let mut hh = node_scale * 8.0 / unit;
@@ -1121,6 +1149,35 @@ fn parse_path(
     // fill mode: segments accumulate into one closed filled path
     let mut segs: Vec<String> = Vec::new();
     let mut path_start: Option<EndPt> = None;
+    // tikz shortens the first and last segment of the whole path, not
+    // every corner of a polyline
+    let n_segs = {
+        let mut n = 0usize;
+        let mut depth = 0i32;
+        let mut k = 0usize;
+        while k < b.len() {
+            match b[k] {
+                '{' | '[' => depth += 1,
+                '}' | ']' => depth -= 1,
+                '-' if depth == 0 && b.get(k + 1) == Some(&'-') => {
+                    n += 1;
+                    k += 1;
+                }
+                't' if depth == 0
+                    && b.get(k + 1) == Some(&'o')
+                    && (k == 0 || !b[k - 1].is_alphanumeric())
+                    && b.get(k + 2).map(|c| !c.is_alphanumeric()).unwrap_or(true) =>
+                {
+                    n += 1;
+                    k += 1;
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        n
+    };
+    let mut seg_idx = 0usize;
     // labels waiting to ride the NEXT segment (tikz `to node {..} (b)`)
     let mut pending_label: Option<(String, Opts)> = None;
 
@@ -1386,8 +1443,11 @@ fn parse_path(
             }
             let (e, ni) = read_end(&b, i).ok_or("line without target")?;
             let s0 = last.ok_or("line without start")?;
-            let p0 = trim(s0, e, opts.shorten_start / unit);
-            let p1 = trim(e, s0, opts.shorten_end / unit);
+            let sh_s = if seg_idx == 0 { opts.shorten_start } else { 0.0 };
+            let sh_e = if seg_idx + 1 >= n_segs { opts.shorten_end } else { 0.0 };
+            seg_idx += 1;
+            let p0 = trim(s0, e, sh_s / unit);
+            let p1 = trim(e, s0, sh_e / unit);
             let p0 = (p0.0 + cdx, p0.1 + cdy);
             let p1 = (p1.0 + cdx, p1.1 + cdy);
             let mut seg_curve: Option<((f64, f64), (f64, f64))> = None;
@@ -1399,8 +1459,8 @@ fn parse_path(
                 let (oa, ia) = (oa.to_radians(), ia.to_radians());
                 // curves depart/arrive along their tangents: rims and
                 // shorten apply in the tangent direction, not the chord
-                let ins0 = if s0.round { s0.hw } else { 0.0 } + opts.shorten_start / unit;
-                let ins1 = if e.round { e.hw } else { 0.0 } + opts.shorten_end / unit;
+                let ins0 = if s0.round { s0.hw } else { 0.0 } + sh_s / unit;
+                let ins1 = if e.round { e.hw } else { 0.0 } + sh_e / unit;
                 let p0 = if ins0 > 0.0 {
                     (s0.x + cdx + ins0 * oa.cos(), s0.y + cdy + ins0 * oa.sin())
                 } else {
@@ -1421,6 +1481,17 @@ fn parse_path(
                         "bezier({}, {}, {}, {})",
                         fmt_pt(p0), fmt_pt(p1), fmt_pt(c1), fmt_pt(c2)
                     ));
+                    last = Some(e);
+                    i = ni;
+                    continue;
+                }
+                if opts.path_only {
+                    if opts.mid_arrow {
+                        let stub = mid_stub(p0, p1, c1, c2);
+                        if !stub.is_empty() {
+                            ops.push(stub);
+                        }
+                    }
                     last = Some(e);
                     i = ni;
                     continue;
@@ -1462,8 +1533,8 @@ fn parse_path(
                 let oa = ang + brad;
                 let ia = ang + std::f64::consts::PI - brad;
                 // rims/shorten along the departure/arrival tangents
-                let ins0 = if s0.round { s0.hw } else { 0.0 } + opts.shorten_start / unit;
-                let ins1 = if e.round { e.hw } else { 0.0 } + opts.shorten_end / unit;
+                let ins0 = if s0.round { s0.hw } else { 0.0 } + sh_s / unit;
+                let ins1 = if e.round { e.hw } else { 0.0 } + sh_e / unit;
                 let p0 = if ins0 > 0.0 {
                     (s0.x + cdx + ins0 * oa.cos(), s0.y + cdy + ins0 * oa.sin())
                 } else {
@@ -1489,6 +1560,17 @@ fn parse_path(
                     i = ni;
                     continue;
                 }
+                if opts.path_only {
+                    if opts.mid_arrow {
+                        let stub = mid_stub(p0, p1, c1, c2);
+                        if !stub.is_empty() {
+                            ops.push(stub);
+                        }
+                    }
+                    last = Some(e);
+                    i = ni;
+                    continue;
+                }
                 ops.push(format!(
                     "bezier({}, {}, {}, {}, {}{})",
                     fmt_pt(p0),
@@ -1507,6 +1589,32 @@ fn parse_path(
             } else {
                 if fill_mode {
                     segs.push(format!("line({}, {})", fmt_pt(p0), fmt_pt(p1)));
+                    last = Some(e);
+                    i = ni;
+                    continue;
+                }
+                if opts.path_only {
+                    // \path draws nothing; only decorations show
+                    if opts.mid_arrow {
+                        let t = opts.mid_pos;
+                        let at = |t: f64| {
+                            (p0.0 + t * (p1.0 - p0.0), p0.1 + t * (p1.1 - p0.1))
+                        };
+                        let (sa, sb) = if opts.mid_rev {
+                            (at((t + 0.08).min(1.0)), at(t))
+                        } else {
+                            (at((t - 0.08).max(0.0)), at(t))
+                        };
+                        if (sb.0 - sa.0).hypot(sb.1 - sa.1) >= 1e-4 {
+                            ops.push(format!(
+                                "line({}, {}, {}, mark: (end: {}))",
+                                fmt_pt(sa),
+                                fmt_pt(sb),
+                                stroke,
+                                tip
+                            ));
+                        }
+                    }
                     last = Some(e);
                     i = ni;
                     continue;
