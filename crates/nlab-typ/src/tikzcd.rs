@@ -1990,8 +1990,13 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
                 }
                 let left_y = -bx; // left normal of (bx, by) is (by, -bx)
                 let side = if left_y * ldy > 0.0 { "left" } else { "right" };
+                let self_sized = ["\\tiny", "\\scriptsize", "\\footnotesize", "\\small"]
+                    .iter()
+                    .any(|s| tex.contains(s))
+                    || tex.contains("matrix}");
                 args.push(format!(
-                    "label: text(0.75em, mi({}))",
+                    "label: text({}em, mi({}))",
+                    if self_sized { "1" } else { "0.75" },
                     emit::ts(&clean_tex(tex))
                 ));
                 args.push(format!("label-side: {}", side));
@@ -2094,6 +2099,12 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         let end_inset = |c: &Coord| -> f64 {
             match c {
                 Coord::Name(n) => {
+                    if n.contains('@') {
+                        // explicit "name"+(dx,dy) offsets position the
+                        // endpoint exactly; the author cleared the
+                        // label themselves
+                        return 0.0;
+                    }
                     let (hw, hh) = anchor_ext.get(n).copied().unwrap_or((0.0, 0.0));
                     2.5 + (dx.abs() * hw + dy.abs() * hh) / len.max(1.0)
                 }
@@ -2614,12 +2625,21 @@ fn push_label_args(args: &mut Vec<String>, l: &Label, centered: bool, color: Opt
         tex.trim().trim_matches(|c| c == '{' || c == '}' || c == ' '),
         "\\lrcorner" | "\\ulcorner" | "\\llcorner" | "\\urcorner"
     );
-    // big 2-cell glyphs shrink illegibly at label size
-    let size = if corner || tex.contains("Downarrow") || tex.contains("Uparrow") {
-        size.max(1.0)
-    } else {
-        size
-    };
+    // a label whose content sizes itself (size switches convert to
+    // mitexsize* calls) must not be shrunk again by the 0.75em wrapper;
+    // matrix labels render full-size in the server output too
+    let self_sized = ["\\tiny", "\\scriptsize", "\\footnotesize", "\\small"]
+        .iter()
+        .any(|s| tex.contains(s))
+        || tex.contains("matrix}");
+    let size = if self_sized { 1.0f64.max(size) } else { size };
+    // a bare 2-cell glyph shrinks illegibly at label size; one with
+    // riding content (\Downarrow(0,1,2)) is sized like any label
+    let bare_glyph = matches!(
+        tex.trim().trim_matches(|c| c == '{' || c == '}' || c == ' '),
+        "\\Downarrow" | "\\Uparrow" | "\\Rightarrow" | "\\Leftarrow"
+    );
+    let size = if corner || bare_glyph { size.max(1.0) } else { size };
     let mut content = format!("mi({})", emit::ts(&clean_tex(&tex)));
     if let Some(deg) = l.rotate {
         // tikz rotates counterclockwise for positive angles, typst clockwise
@@ -2767,6 +2787,12 @@ fn clean_tex(s: &str) -> String {
             from = pos + 6;
         }
     }
+    // LaTeX ignores size switches inside math (they only act in text
+    // boxes), and authors write ineffective \large there; up-sizes go
+    s = regex::Regex::new(r"\\(?:large|Large|LARGE|huge|Huge)\b")
+        .unwrap()
+        .replace_all(&s, "")
+        .to_string();
     s = split_mbox(&s);
     s = s.replace("\\mbox", "\\text");
     s = s.replace("\\\"", "\"");
