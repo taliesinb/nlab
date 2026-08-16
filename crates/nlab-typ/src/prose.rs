@@ -614,7 +614,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let rotatebox = scope-or("rotatebox", (deg, it) => it)
 #let raisebox = scope-or("raisebox", (d, it) => it)
 #let boxed = scope-or("boxed", it => box(stroke: 0.5pt, inset: 2.5pt, $it$))
-#let fbox = scope-or("fbox", it => box(stroke: 0.5pt, inset: 3pt, it))
+#let fbox = it => box(stroke: 0.5pt, inset: (x: 6pt, y: 5pt), it)
 #let textrm = scope-or("textrm", it => math.upright(it))
 #let textup = scope-or("textup", it => math.upright(it))
 #let textbf = scope-or("textbf", it => math.bold(it))
@@ -784,10 +784,10 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
             }
             // xy grids default to equal 2pc separations both ways
             if !seps.iter().any(|s| s.starts_with("column") || s.starts_with("sep")) {
-                seps.push("column sep=24pt".into());
+                seps.push("column sep=40pt".into());
             }
             if !seps.iter().any(|s| s.starts_with("row") || s.starts_with("sep")) {
-                seps.push("row sep=24pt".into());
+                seps.push("row sep=34pt".into());
             }
             seps.push("xymode".into());
             let opt = format!("[{}]", seps.join(", "));

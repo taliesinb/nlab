@@ -1545,12 +1545,34 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         }
     }
 
+    let xymode = opts.contains("xymode");
+    // xy stretches a single-column gap so straight-arrow labels
+    // (mostly) fit; there is no middle column to pad, so widen the
+    // global column separation
+    if xymode {
+        let mut need_sp = colsp;
+        for a in &arrows {
+            let (Coord::Cell(r1, c1), Coord::Cell(r2, c2)) = (&a.from, &a.to) else {
+                continue;
+            };
+            if r1 != r2 || (c2 - c1).abs() != 1 {
+                continue;
+            }
+            for l in &a.labels {
+                if label_is_blank(&l.tex) {
+                    continue;
+                }
+                let lw = 2.0 * est_halfwidth_pt(&clean_tex(&l.tex)) * 0.75;
+                need_sp = need_sp.max((0.8 * lw).min(160.0));
+            }
+        }
+        colsp = need_sp;
+    }
     // tikzcd widens column separation so horizontal edge labels fit;
-    // fletcher doesn't, so pad middle columns with invisible spacers.
-    // xy does NOT widen (labels overflow), so xymatrix-derived sources
-    // skip this
+    // fletcher doesn't, so pad middle columns with invisible spacers
+    // (xy stretches a little less: labels may overflow slightly)
     let mut spacers: Vec<(i32, i32, f64)> = Vec::new();
-    if !opts.contains("xymode") {
+    {
         let xs_now = {
             let mut cs = vec![0.0];
             for i in 1..colw.len() {
@@ -1578,7 +1600,7 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
             let span = xs_now[hi as usize] - xs_now[lo as usize]
                 - colw[lo as usize] / 2.0
                 - colw[hi as usize] / 2.0;
-            let need = lw + 50.0;
+            let need = if xymode { 0.9 * lw + 8.0 } else { lw + 50.0 };
             if span < need {
                 let mids: Vec<i32> = ((lo + 1)..hi)
                     .filter(|c| colw.get(*c as usize).copied().unwrap_or(0.0) < 1.0)
