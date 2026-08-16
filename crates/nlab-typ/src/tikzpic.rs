@@ -124,6 +124,113 @@ fn map_color(s: &str) -> Option<String> {
     base_of(s).map(String::from)
 }
 
+
+/// Is this a `.anchor` word (center/north/south east/...)?
+fn is_anchor_word(a: &str) -> bool {
+    !a.is_empty() && a.chars().all(|c| c.is_alphabetic() || c == ' ')
+}
+
+/// Resolve `NAME` or `NAME.anchor` to a node center.
+fn node_pt(name: &str, nodes: &HashMap<String, NamedNode>) -> Option<(f64, f64)> {
+    let name = name.trim();
+    if let Some(n) = nodes.get(name) {
+        return Some((n.x, n.y));
+    }
+    if let Some((base, anchor)) = name.rsplit_once('.') {
+        if is_anchor_word(anchor) {
+            if let Some(n) = nodes.get(base.trim()) {
+                return Some((n.x, n.y));
+            }
+        }
+    }
+    None
+}
+
+/// Coordinate expressions: plain pairs and polar forms, node names,
+/// and calc syntax - `$(A)!0.5!(B)+(0,-0.25)$`, `(centre) + (-1, 1)`.
+fn eval_coord(
+    expr: &str,
+    nodes: &HashMap<String, NamedNode>,
+    frame: &Frame,
+) -> Option<(f64, f64)> {
+    let e = expr.trim().trim_start_matches('$').trim_end_matches('$').trim();
+    // linear part of the frame (offsets scale/rotate but don't move)
+    let origin = frame.apply((0.0, 0.0));
+    let lin = |p: (f64, f64)| {
+        let q = frame.apply(p);
+        (q.0 - origin.0, q.1 - origin.1)
+    };
+    // plain coordinate or node?
+    if let Some(pt) = node_pt(e, nodes) {
+        return Some(pt);
+    }
+    if !e.contains('(') {
+        return parse_pair(&format!("({e})")).map(|p| frame.apply(p));
+    }
+    // split into top-level chunks around + / - (outside parens)
+    let b: Vec<char> = e.chars().collect();
+    let mut terms: Vec<(f64, String)> = Vec::new();
+    let mut depth = 0i32;
+    let mut sign = 1.0f64;
+    let mut cur = String::new();
+    for &c in &b {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            '+' | '-' if depth == 0 => {
+                if !cur.trim().is_empty() {
+                    terms.push((sign, std::mem::take(&mut cur)));
+                } else {
+                    cur.clear();
+                }
+                sign = if c == '-' { -1.0 } else { 1.0 };
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        terms.push((sign, cur));
+    }
+    let mut acc: Option<(f64, f64)> = None;
+    for (k, (sgn, term)) in terms.iter().enumerate() {
+        let t = term.trim();
+        // interpolation (A)!f!(B)
+        let val: Option<(f64, f64)> = if let Some(bang) = t.find(")!") {
+            let a = t[..bang + 1].trim();
+            let rest = &t[bang + 2..];
+            let bang2 = rest.find('!')?;
+            let f: f64 = rest[..bang2].trim().parse().ok()?;
+            let bt = rest[bang2 + 1..].trim();
+            let pa = eval_coord(a.trim_matches(|c| c == '(' || c == ')'), nodes, frame)
+                .or_else(|| node_pt(a.trim_matches(|c| c == '(' || c == ')'), nodes))?;
+            let pb = eval_coord(bt.trim_matches(|c| c == '(' || c == ')'), nodes, frame)?;
+            Some((pa.0 + f * (pb.0 - pa.0), pa.1 + f * (pb.1 - pa.1)))
+        } else {
+            let inner = t.trim_matches(|c| c == '(' || c == ')').trim();
+            if let Some(pt) = node_pt(inner, nodes) {
+                Some(pt)
+            } else if let Some(p) = parse_pair(&format!("({inner})")) {
+                // absolute for the leading term, vector afterwards
+                if k == 0 { Some(frame.apply(p)) } else { Some(lin(p)) }
+            } else {
+                None
+            }
+        };
+        let v = val?;
+        acc = Some(match acc {
+            None => (sgn * v.0, sgn * v.1),
+            Some(a) => (a.0 + sgn * v.0, a.1 + sgn * v.1),
+        });
+    }
+    acc
+}
+
 /// Evaluate `45+240`-style +/- chains (tikz polar angles use them).
 fn eval_num(s: &str) -> Option<f64> {
     let s = s.trim().trim_start_matches('(').trim_end_matches(')');
@@ -691,28 +798,115 @@ fn parse_node_stmt(
         i = j + 1;
     }
     i = skip_ws(&b, i);
+    // relative placement: [above right of=X] with node distance
     if !(b.get(i) == Some(&'a') && b.get(i + 1) == Some(&'t')) {
-        return Err("node without at".into());
+        let mut toks: Vec<String> = Vec::new();
+        for t in node_opts.split(',') {
+            let t = t.trim();
+            let base = t.strip_prefix("style=").unwrap_or(t).trim();
+            if let Some(spec) = styles.get(base) {
+                toks.extend(spec.split(',').map(|x| x.trim().to_string()));
+            } else if !t.is_empty() {
+                toks.push(t.to_string());
+            }
+        }
+        // node distance: option, else the every-node default, else 1cm
+        let mut dist_pt = styles
+            .get("every node")
+            .and_then(|sp| {
+                sp.split(',').find_map(|t| {
+                    t.replace(' ', "").strip_prefix("nodedistance=").and_then(len_pt)
+                })
+            })
+            .unwrap_or(28.45);
+        let mut rel: Option<((f64, f64), String)> = None;
+        for t in &toks {
+            let t = t.replace(' ', "");
+            if let Some(v) = t.strip_prefix("nodedistance=") {
+                if let Some(d) = len_pt(v) {
+                    dist_pt = d;
+                }
+            } else if let Some(k) = t.find("of=") {
+                let dir = &t[..k];
+                let name = t[k + 3..].trim().to_string();
+                let s2 = std::f64::consts::FRAC_1_SQRT_2;
+                let v = match dir {
+                    "above" => (0.0, 1.0),
+                    "below" => (0.0, -1.0),
+                    "left" => (-1.0, 0.0),
+                    "right" => (1.0, 0.0),
+                    "aboveright" => (s2, s2),
+                    "aboveleft" => (-s2, s2),
+                    "belowright" => (s2, -s2),
+                    "belowleft" => (-s2, -s2),
+                    _ => (0.0, 0.0),
+                };
+                rel = Some((v, name));
+            }
+        }
+        if let Some(((vx, vy), base)) = rel {
+            if let Some(n) = nodes.get(&base) {
+                let d = dist_pt / unit;
+                let (x, y) = (n.x + vx * d, n.y + vy * d);
+                return finish_node(
+                    &b, i, name, x, y, is_coord, unit, styles, node_scale, node_opts,
+                );
+            }
+            return Err("of= names an unknown node".into());
+        }
+        // no `at`, no relative placement: tikz puts it at the origin
+        return finish_node(
+            &b, i, name, 0.0, 0.0, is_coord, unit, styles, node_scale, node_opts,
+        );
     }
     i += 2;
     i = skip_ws(&b, i);
     if b.get(i) != Some(&'(') {
         return Err("node without coord".into());
     }
-    let mut j = i + 1;
-    while j < b.len() && b[j] != ')' {
+    let mut depth = 0i32;
+    let mut j = i;
+    while j < b.len() {
+        match b[j] {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
         j += 1;
     }
     let inner: String = b[i + 1..j].iter().collect();
-    let at_name = inner.trim().split('.').next().unwrap_or("").trim();
-    let (x, y) = if let Some(n) = nodes.get(at_name) {
-        (n.x, n.y)
-    } else {
-        let p = parse_pair(&format!("({inner})")).ok_or("bad node coord")?;
-        frame.apply(p)
-    };
+    let (x, y) = node_pt(inner.trim(), nodes)
+        .or_else(|| eval_coord(&inner, nodes, frame))
+        .ok_or("bad node coord")?;
     i = j + 1;
-    i = skip_ws(&b, i);
+    finish_node(&b, i, name, x, y, is_coord, unit, styles, node_scale, node_opts)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_node(
+    b: &[char],
+    mut i: usize,
+    mut name: Option<String>,
+    x: f64,
+    y: f64,
+    is_coord: bool,
+    unit: f64,
+    styles: &HashMap<String, String>,
+    node_scale: f64,
+    node_opts: String,
+) -> Result<(Option<String>, NamedNode, Option<String>), String> {
+    let skip_ws = |b: &[char], mut i: usize| {
+        while i < b.len() && b[i].is_whitespace() {
+            i += 1;
+        }
+        i
+    };
+    i = skip_ws(b, i);
     // the name may also follow the coordinate: \node at (x,y) (n) {..}
     if name.is_none() && b.get(i) == Some(&'(') {
         let mut j = i + 1;
@@ -720,7 +914,7 @@ fn parse_node_stmt(
             j += 1;
         }
         name = Some(b[i + 1..j].iter().collect::<String>().trim().to_string());
-        i = skip_ws(&b, j + 1);
+        i = skip_ws(b, j + 1);
     }
     let mut body = String::new();
     if b.get(i) == Some(&'{') {
@@ -760,6 +954,8 @@ fn parse_node_stmt(
             if v != "none" && COLORS.contains(&v) {
                 fill = Some(v.to_string());
             }
+        } else if t == "fill" {
+            fill = Some("black".into());
         } else if t == "draw" {
             draw = true;
         } else if let Some(v) = t.strip_prefix("draw=") {
@@ -802,8 +998,11 @@ fn parse_node_stmt(
             node_content_scaled(trimmed, None, node_scale)
         )
     } else if circle && draw {
-        // circled node on a wire crossing
-        hw = hw * 0.7 + 2.0 / unit;
+        // circled node: extents match the drawn circle frame, whose
+        // radius is the padded content's half-diagonal
+        let est = crate::tikzcd::est_halfwidth_pt(trimmed) * node_scale;
+        let pad = inner_sep.unwrap_or(1.5) + 1.0;
+        hw = (est.hypot(5.2 * node_scale) + pad) / unit;
         hh = hw;
         round = true;
         format!(
@@ -909,6 +1108,12 @@ fn parse_path(
     };
     let (cdx, cdy) = opts.canvas_shift;
 
+    // `(a) edge[opts] node {..} (b)` behaves like `to` for our purposes
+    let path = regex::Regex::new(r"\bedge\b")
+        .unwrap()
+        .replace_all(path, "to")
+        .to_string();
+    let path = path.as_str();
     let b: Vec<char> = path.chars().collect();
     let mut i = 0usize;
     let mut ops = Vec::new();
@@ -926,8 +1131,20 @@ fn parse_path(
         if b.get(i) != Some(&'(') {
             return None;
         }
-        let mut j = i + 1;
-        while j < b.len() && b[j] != ')' {
+        // balanced: calc coords nest parens
+        let mut depth = 0i32;
+        let mut j = i;
+        while j < b.len() {
+            match b[j] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
             j += 1;
         }
         let inner: String = b[i + 1..j].iter().collect();
@@ -935,15 +1152,17 @@ fn parse_path(
         if let Some(n) = nodes.get(inner) {
             return Some((EndPt { x: n.x, y: n.y, hw: n.hw, hh: n.hh, round: n.round }, j + 1));
         }
-        // `(name.center)` and friends: an exact point on the node, no
-        // border trimming
-        if let Some((base, _anchor)) = inner.rsplit_once('.') {
-            if let Some(n) = nodes.get(base.trim()) {
-                return Some((EndPt { x: n.x, y: n.y, hw: 0.0, hh: 0.0, round: false }, j + 1));
+        // `(name.center)`: an exact point on the node, no trimming.
+        // The suffix must be a word - otherwise `(2.75, 0)` would
+        // resolve against a node named "2"
+        if let Some((base, anchor)) = inner.rsplit_once('.') {
+            if is_anchor_word(anchor) {
+                if let Some(n) = nodes.get(base.trim()) {
+                    return Some((EndPt { x: n.x, y: n.y, hw: 0.0, hh: 0.0, round: false }, j + 1));
+                }
             }
         }
-        let p = parse_pair(&format!("({inner})"))?;
-        let (x, y) = frame.apply(p);
+        let (x, y) = eval_coord(&inner, nodes, frame)?;
         Some((EndPt { x, y, hw: 0.0, hh: 0.0, round: false }, j + 1))
     };
 
@@ -969,6 +1188,33 @@ fn parse_path(
         (p.x + ux * d, p.y + uy * d)
     };
 
+    // arrowhead stub riding a cubic at opts.mid_pos
+    let mid_stub = |p0: (f64, f64), p1: (f64, f64), c1: (f64, f64), c2: (f64, f64)| -> String {
+        let t = opts.mid_pos;
+        let bez = |t: f64| {
+            let u = 1.0 - t;
+            (
+                u * u * u * p0.0 + 3.0 * u * u * t * c1.0 + 3.0 * u * t * t * c2.0 + t * t * t * p1.0,
+                u * u * u * p0.1 + 3.0 * u * u * t * c1.1 + 3.0 * u * t * t * c2.1 + t * t * t * p1.1,
+            )
+        };
+        let (sa, sb) = if opts.mid_rev {
+            (bez((t + 0.06).min(1.0)), bez(t))
+        } else {
+            (bez((t - 0.06).max(0.0)), bez(t))
+        };
+        if (sb.0 - sa.0).hypot(sb.1 - sa.1) < 1e-4 {
+            // cetz divides by zero placing marks on empty segments
+            return String::new();
+        }
+        format!(
+            "line({}, {}, {}, mark: (end: {}))",
+            fmt_pt(sa),
+            fmt_pt(sb),
+            stroke,
+            tip
+        )
+    };
     while i < b.len() {
         while i < b.len() && b[i].is_whitespace() {
             i += 1;
@@ -1150,12 +1396,23 @@ fn parse_path(
                 // control distance ~0.39 x chord (looseness 1).
                 // Chord-direction trimming is wrong for a curve: at a
                 // small dot it pokes out the far side - end at center
-                let small = |n: EndPt| n.hw > 0.0 && n.hw.max(n.hh) <= 3.5 / unit;
-                let p0 = if small(s0) { (s0.x + cdx, s0.y + cdy) } else { p0 };
-                let p1 = if small(e) { (e.x + cdx, e.y + cdy) } else { p1 };
+                let (oa, ia) = (oa.to_radians(), ia.to_radians());
+                // curves depart/arrive along their tangents: rims and
+                // shorten apply in the tangent direction, not the chord
+                let ins0 = if s0.round { s0.hw } else { 0.0 } + opts.shorten_start / unit;
+                let ins1 = if e.round { e.hw } else { 0.0 } + opts.shorten_end / unit;
+                let p0 = if ins0 > 0.0 {
+                    (s0.x + cdx + ins0 * oa.cos(), s0.y + cdy + ins0 * oa.sin())
+                } else {
+                    p0
+                };
+                let p1 = if ins1 > 0.0 {
+                    (e.x + cdx + ins1 * ia.cos(), e.y + cdy + ins1 * ia.sin())
+                } else {
+                    p1
+                };
                 let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
                 let d = 0.39 * dx.hypot(dy);
-                let (oa, ia) = (oa.to_radians(), ia.to_radians());
                 let c1 = (p0.0 + d * oa.cos(), p0.1 + d * oa.sin());
                 let c2 = (p1.0 + d * ia.cos(), p1.1 + d * ia.sin());
                 seg_curve = Some((c1, c2));
@@ -1189,17 +1446,36 @@ fn parse_path(
                     stroke,
                     mark
                 ));
+                if opts.mid_arrow {
+                    let stub = mid_stub(p0, p1, c1, c2);
+                    if !stub.is_empty() {
+                        ops.push(stub);
+                    }
+                }
             } else if seg_bend != 0.0 {
                 // tikz bend left=B: tangents rotated B off the chord,
                 // control distance 0.3915 x len x looseness - smooth
                 // through 90-degree caps where a flat dome kinks
                 let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
-                let len = dx.hypot(dy).max(1e-6);
                 let ang = dy.atan2(dx);
                 let brad = seg_bend.to_radians();
-                let d = 0.3915 * len * opts.looseness * (1.0 + 0.9 * (brad.abs() / std::f64::consts::PI));
                 let oa = ang + brad;
                 let ia = ang + std::f64::consts::PI - brad;
+                // rims/shorten along the departure/arrival tangents
+                let ins0 = if s0.round { s0.hw } else { 0.0 } + opts.shorten_start / unit;
+                let ins1 = if e.round { e.hw } else { 0.0 } + opts.shorten_end / unit;
+                let p0 = if ins0 > 0.0 {
+                    (s0.x + cdx + ins0 * oa.cos(), s0.y + cdy + ins0 * oa.sin())
+                } else {
+                    p0
+                };
+                let p1 = if ins1 > 0.0 {
+                    (e.x + cdx + ins1 * ia.cos(), e.y + cdy + ins1 * ia.sin())
+                } else {
+                    p1
+                };
+                let len = (p1.0 - p0.0).hypot(p1.1 - p0.1).max(1e-6);
+                let d = 0.3915 * len * opts.looseness * (1.0 + 0.9 * (brad.abs() / std::f64::consts::PI));
                 let c1 = (p0.0 + d * oa.cos(), p0.1 + d * oa.sin());
                 let c2 = (p1.0 + d * ia.cos(), p1.1 + d * ia.sin());
                 seg_curve = Some((c1, c2));
@@ -1222,6 +1498,12 @@ fn parse_path(
                     stroke,
                     mark
                 ));
+                if opts.mid_arrow {
+                    let stub = mid_stub(p0, p1, c1, c2);
+                    if !stub.is_empty() {
+                        ops.push(stub);
+                    }
+                }
             } else {
                 if fill_mode {
                     segs.push(format!("line({}, {})", fmt_pt(p0), fmt_pt(p1)));
@@ -1250,20 +1532,23 @@ fn parse_path(
                         (at((t - 0.08).max(0.0)), at(t))
                     };
                     ops.push(format!("line({}, {}, {})", fmt_pt(p0), fmt_pt(p1), stroke));
-                    ops.push(format!(
-                        "line({}, {}, {}, mark: (end: {}))",
-                        fmt_pt(sa),
-                        fmt_pt(sb),
-                        stroke,
-                        tip
-                    ));
+                    if (sb.0 - sa.0).hypot(sb.1 - sa.1) >= 1e-4 {
+                        ops.push(format!(
+                            "line({}, {}, {}, mark: (end: {}))",
+                            fmt_pt(sa),
+                            fmt_pt(sb),
+                            stroke,
+                            tip
+                        ));
+                    }
                 } else {
+                    let m = if (p1.0 - p0.0).hypot(p1.1 - p0.1) < 1e-4 { "" } else { mark.as_str() };
                     ops.push(format!(
                         "line({}, {}, {}{})",
                         fmt_pt(p0),
                         fmt_pt(p1),
                         stroke,
-                        mark
+                        m
                     ));
                 }
             }
