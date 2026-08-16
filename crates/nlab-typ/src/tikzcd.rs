@@ -1276,6 +1276,11 @@ impl PhysGrid {
 /// document with typst and querying `measure()` results. Falls back to
 /// None (callers keep the glyph-count estimate) on any failure or when
 /// NLAB_MEASURE=0.
+/// Measure one converted math content (width, height) in pt.
+pub(crate) fn measure_one(ts: &str) -> Option<(f64, f64)> {
+    measure_nodes(&[ts.to_string()]).and_then(|v| v.first().copied())
+}
+
 fn measure_nodes(labels_ts: &[String]) -> Option<Vec<(f64, f64)>> {
     if labels_ts.is_empty()
         || std::env::var("NLAB_MEASURE").map(|v| v == "0").unwrap_or(false)

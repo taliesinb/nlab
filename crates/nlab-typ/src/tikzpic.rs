@@ -1071,17 +1071,21 @@ fn finish_node(
     } else if circle && draw {
         // circled node: draw the circle ourselves at a known radius so
         // wires can land exactly on the rim
-        let bare = trimmed
-            .trim_matches(|c| c == '$' || c == '{' || c == '}' || c == ' ');
-        let single_glyph = bare.len() <= 6
-            && bare.trim_start_matches('\\').chars().all(|c| c.is_ascii_alphabetic())
-            && !bare.is_empty();
-        let r_pt = if single_glyph {
-            // one letter: half-diagonal of ~6x8pt glyph metrics
-            5.0 * node_scale + inner_sep.unwrap_or(1.5) + 0.5
-        } else {
-            let est = crate::tikzcd::est_halfwidth_pt(trimmed) * node_scale;
-            est.max(4.6 * node_scale) + inner_sep.unwrap_or(1.5) + 0.8
+        // radius: half-diagonal of the measured content plus padding
+        // (tikz circle nodes enclose the content box)
+        let content_ts = emit::ts(&crate::tikzcd::clean_cell_tex(
+            trimmed.trim_matches('$'),
+        ));
+        let r_pt = match crate::tikzcd::measure_one(&content_ts) {
+            Some((w, h)) => {
+                (w * node_scale / 2.0).hypot(h * node_scale / 2.0)
+                    + inner_sep.unwrap_or(1.5)
+                    + 0.5
+            }
+            None => {
+                let est = crate::tikzcd::est_halfwidth_pt(trimmed) * node_scale;
+                est.max(4.6 * node_scale) + inner_sep.unwrap_or(1.5) + 0.8
+            }
         };
         hw = r_pt / unit;
         hh = hw;
