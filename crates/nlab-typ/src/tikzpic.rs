@@ -954,9 +954,14 @@ fn parse_path(
         let (ux, uy) = (dx / len, dy / len);
         let border = if p.hw > 0.0 || p.hh > 0.0 {
             let k = (ux.abs() / p.hw.max(1e-6)).max(uy.abs() / p.hh.max(1e-6));
-            // wires TOUCH round rims and small dots; text keeps a gap
-            let pad = if p.round || p.hw.max(p.hh) <= 3.5 / unit { 0.0 } else { 2.0 / unit };
-            (1.0 / k) + pad
+            if k <= 1e-9 {
+                // degenerate zero-length chord
+                0.0
+            } else {
+                // wires TOUCH round rims and small dots; text keeps a gap
+                let pad = if p.round || p.hw.max(p.hh) <= 3.5 / unit { 0.0 } else { 2.0 / unit };
+                ((1.0 / k) + pad).min(len * 0.5)
+            }
         } else {
             0.0
         };
