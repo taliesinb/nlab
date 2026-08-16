@@ -1,0 +1,11 @@
+{
+  "page": "5787",
+  "note": "anchor truncated mid-URL, swallowing following prose",
+  "edits": [
+    {
+      "find": "\\[<a href=\"https://doi.org/10.1007/Bhe notion of \"universally injective morphism of schemes\"",
+      "replace": "\nThe notion of \"universally injective morphism of schemes\"",
+      "why": "URL cut off mid-doi; keep the prose, drop the dead link"
+    }
+  ]
+}

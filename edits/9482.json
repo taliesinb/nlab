@@ -1,0 +1,11 @@
+{
+  "page": "9482",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "_[WKB approximation](http://en.wikipedia.org/wiki/WKB_approximation\n",
+      "replace": "_[WKB approximation](http://en.wikipedia.org/wiki/WKB_approximation)_\n",
+      "why": "missing closing paren (and italic close)"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "page": "4131",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "[Basis for a topology](https://ece.iisc.ac.in/~parimal/proofs/lecture-13.pdf\n",
+      "replace": "[Basis for a topology](https://ece.iisc.ac.in/~parimal/proofs/lecture-13.pdf)\n",
+      "why": "missing closing paren"
+    }
+  ]
+}

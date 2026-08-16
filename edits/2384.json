@@ -1,0 +1,10 @@
+{
+  "page": "2384",
+  "note": "unclosed link URL in references",
+  "edits": [
+    {
+      "find": "](https://doi.org/10.1016/j.biosystems.2023.104846\n\nNeuroscience",
+      "replace": "](https://doi.org/10.1016/j.biosystems.2023.104846)\n\nNeuroscience"
+    }
+  ]
+}

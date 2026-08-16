@@ -1,0 +1,10 @@
+{
+  "page": "24224",
+  "note": "stray ']]' inside a link's italic text",
+  "edits": [
+    {
+      "find": "[_A coherence theorem for Martin-L\u00f6f's type theory.]]_](",
+      "replace": "[_A coherence theorem for Martin-L\u00f6f's type theory_]("
+    }
+  ]
+}

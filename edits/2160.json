@@ -1,0 +1,10 @@
+{
+  "page": "2160",
+  "note": "unclosed link URL in references",
+  "edits": [
+    {
+      "find": "[doi](https://doi.org/10.1007/s00220-004-116\n\n",
+      "replace": "[doi](https://doi.org/10.1007/s00220-004-116)\n\n"
+    }
+  ]
+}

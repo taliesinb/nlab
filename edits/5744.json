@@ -1,0 +1,11 @@
+{
+  "page": "5744",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "[doi](http://dx.doi.org/10.1006/aima.1996.0031],\n",
+      "replace": "[doi](http://dx.doi.org/10.1006/aima.1996.0031),\n",
+      "why": "']' typed for ')'"
+    }
+  ]
+}

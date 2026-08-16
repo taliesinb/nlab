@@ -2,7 +2,10 @@
   "page": "24183",
   "note": "anchor closed as '</a<' in the references list",
   "edits": [
-    {"find": "</a<,", "replace": "</a>,",
-     "why": "typo'd close tag swallows the rest of the list item"}
+    {
+      "find": "ISBN-13: 978-0-8218-4930-9]</a<,",
+      "replace": "ISBN-13: 978-0-8218-4930-9</a>,",
+      "why": "stray ] inside the anchor text plus </a< typo"
+    }
   ]
 }

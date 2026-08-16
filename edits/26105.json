@@ -1,0 +1,11 @@
+{
+  "page": "26105",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "[doi](https://doi.org/10.1006/jabr.1994.131\n\n",
+      "replace": "[doi](https://doi.org/10.1006/jabr.1994.131)\n\n",
+      "why": "missing closing paren"
+    }
+  ]
+}

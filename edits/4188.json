@@ -1,0 +1,10 @@
+{
+  "page": "4188",
+  "note": "anchor href missing closing quote",
+  "edits": [
+    {
+      "find": "0001-8708(71)90020-X>doi</a>",
+      "replace": "0001-8708(71)90020-X\">doi</a>"
+    }
+  ]
+}

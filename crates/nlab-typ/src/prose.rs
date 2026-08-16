@@ -144,8 +144,27 @@ fn files_root() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("build/nlab-files"))
 }
 
+/// Escape caption text for typst, but keep `[text](url)` links live.
+fn caption_typst(text: &str) -> String {
+    let link_re = regex::Regex::new(r"\[([^\[\]]+)\]\((https?://[^)\s]+)\)").unwrap();
+    let mut out = String::new();
+    let mut pos = 0usize;
+    for m in link_re.captures_iter(text) {
+        let whole = m.get(0).unwrap();
+        out.push_str(&escape_typst(&text[pos..whole.start()]));
+        out.push_str(&format!(
+            "#link(\"{}\")[{}]",
+            &m[2],
+            escape_typst(&m[1])
+        ));
+        pos = whole.end();
+    }
+    out.push_str(&escape_typst(&text[pos..]));
+    out
+}
+
 fn image_typst(url: &str, caption_html: &str) -> String {
-    let caption = escape_typst(
+    let caption = caption_typst(
         &regex::Regex::new(r"<[^>]+>")
             .unwrap()
             .replace_all(caption_html, "")
@@ -853,7 +872,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
     // inline <a> tags become markdown links BEFORE math extraction:
     // anchors inside \text{} would otherwise reach typst raw and
     // parse as unclosed <labels>
-    let src = regex::Regex::new(r#"(?s)<a\b[^>]*?href="([^"]+)"[^>]*>(.*?)</a>"#)
+    let src = regex::Regex::new(r#"(?s)<a\b[^>]*?href="([^"]+?)"?[^>]*>(.*?)<[/\\]a>"#)
         .unwrap()
         .replace_all(&src, "[$2]($1)")
         .to_string();
@@ -892,13 +911,21 @@ terminology|notn|notation|conjecture|assumption|exercise";
         }
         out.join("\n")
     };
-    // citations often write \[arXiv:...\](url): escaped brackets are
-    // literal text to CommonMark, so the link is lost — relink with the
-    // brackets kept in the text
-    let src = regex::Regex::new(r"\\{1,2}\[([^\[\]\n]+)\\{1,2}\]\((https?://|/nlab/)")
-        .unwrap()
-        .replace_all(&src, "[&lbrack;$1&rbrack;]($2")
-        .to_string();
+    // citation lines wrap link groups in escaped brackets \[..\];
+    // CommonMark treats the escapes as literal text and then refuses
+    // the inner links. On lines that clearly carry links, turn escaped
+    // brackets into character references so the links parse.
+    let src = src
+        .lines()
+        .map(|l| {
+            if l.contains("](http") || l.contains("<a ") || l.contains("](/nlab") {
+                l.replace("\\[", "&#91;").replace("\\]", "&#93;")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     // named entities for <, >, & are author escapes; keep them literal
     // through markdown
     let src = src

@@ -1,0 +1,22 @@
+{
+  "page": "8394",
+  "note": "unclosed ** on several list items",
+  "edits": [
+    {
+      "find": "* **[[predicate logic]] (based on its subset)\n",
+      "replace": "* **[[predicate logic]] (based on its subset)**\n"
+    },
+    {
+      "find": "* **[[linear logic]]\n",
+      "replace": "* **[[linear logic]]**\n"
+    },
+    {
+      "find": "* **[[fuzzy logic]]\n",
+      "replace": "* **[[fuzzy logic]]**\n"
+    },
+    {
+      "find": "* **computer algebra systems\n",
+      "replace": "* **computer algebra systems**\n"
+    }
+  ]
+}

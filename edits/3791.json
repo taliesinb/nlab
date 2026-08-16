@@ -1,0 +1,11 @@
+{
+  "page": "3791",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "[doi:10.1007/PL00001396](https://doi.org/10.1007/P\n\n",
+      "replace": "[doi:10.1007/PL00001396](https://doi.org/10.1007/PL00001396)\n\n",
+      "why": "URL truncated mid-identifier"
+    }
+  ]
+}

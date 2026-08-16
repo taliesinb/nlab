@@ -1,0 +1,11 @@
+{
+  "page": "4226",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "[pdf](http://math.huji.ac.il/~ehud/papers/intv-060428.pd\n\n",
+      "replace": "[pdf](http://math.huji.ac.il/~ehud/papers/intv-060428.pdf)\n\n",
+      "why": "URL truncated + missing paren"
+    }
+  ]
+}

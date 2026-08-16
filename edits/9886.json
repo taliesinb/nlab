@@ -1,0 +1,11 @@
+{
+  "page": "9886",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "[ArXiv 0805.1628](http://arxiv.org/abs/0805.16280\n",
+      "replace": "[ArXiv 0805.1628](http://arxiv.org/abs/0805.1628)\n",
+      "why": "trailing 0 was the missing paren"
+    }
+  ]
+}

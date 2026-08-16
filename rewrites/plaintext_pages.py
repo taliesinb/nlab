@@ -22,7 +22,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGES = ROOT / "build/typ-pages"
 OUT = ROOT / "build/typ-text"
 
-DROP = {"math", "svg", "style", "script", "nav", "head", "title"}
+DROP = {"math", "svg", "style", "script", "nav", "head", "title",
+        "pre", "code"}
 
 
 class Extractor(HTMLParser):

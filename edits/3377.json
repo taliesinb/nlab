@@ -1,0 +1,11 @@
+{
+  "page": "3377",
+  "note": "broken citation link",
+  "edits": [
+    {
+      "find": "_Higgs fields, bundle gerbes and string structures_, arxiv:math.DG/0106179](",
+      "replace": "_Higgs fields, bundle gerbes and string structures_, [arxiv:math.DG/0106179](",
+      "why": "missing opening bracket"
+    }
+  ]
+}
