@@ -709,6 +709,9 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
     block(above: 1em, below: 1em, body)
   }
 }
+#let nlab-cite(id) = context {
+  if query(label(id)).len() > 0 { [\[#link(label(id))[#id]\]] } else { [\[#id\]] }
+}
 #let nlab-ref(id) = context {
   let ms = query(label(id))
   if ms.len() > 0 and ms.first().func() == metadata and ms.first().value != none {
@@ -1004,6 +1007,14 @@ terminology|notn|notation|conjecture|assumption|exercise";
     let src = ref_re
         .replace_all(&src, |c: &regex::Captures| {
             stash.put(format!("#nlab-ref(\"{}\")", sanitize_id(&c[1])))
+        })
+        .to_string();
+    // \cite{Key}: bracketed link to the reference-list anchor when it
+    // exists, plain bracketed key otherwise
+    let cite_re = regex::Regex::new(r"\\cite\{([^}\n]+)\}").unwrap();
+    let src = cite_re
+        .replace_all(&src, |c: &regex::Captures| {
+            stash.put(format!("#nlab-cite(\"{}\")", sanitize_id(&c[1])))
         })
         .to_string();
     // a bare \ref with no target is an author slip; drop the command
