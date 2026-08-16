@@ -50,8 +50,8 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                     format!("xy2b{}", twocell_n),
                 );
                 out.push_str(&format!(
-                    "\\ar[{d}, bend left=25, \"{{{top}}}\"{{name={ta}}}]\
-\\ar[{d}, bend right=25, \"{{{bot}}}\"{{swap, name={tb}}}]\
+                    "\\ar[{d}, bend left=15, \"{{{top}}}\"{{name={ta}}}]\
+\\ar[{d}, bend right=15, \"{{{bot}}}\"{{swap, name={tb}}}]\
 \\ar[Rightarrow, from={ta}, to={tb}, \"{{{center}}}\"]",
                     d = dir,
                     top = top,

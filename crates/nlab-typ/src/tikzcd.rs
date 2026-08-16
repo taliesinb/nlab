@@ -1169,7 +1169,9 @@ fn extract_arrows(cell: &str, r: i32, c: i32, arrows: &mut Vec<Arrow>) -> Result
 
 fn spacing_from_opts(opts: &str) -> (f64, f64) {
     // defaults match the array emitter's diagram spacing
-    let (mut col, mut row) = (52.0f64, 27.0); // tuned against server-render medians
+    let (mut col, mut row) = (52.0f64, 31.0); // tuned against server-render medians
+    // (+4pt row over the old tuning: bounds-edge text metrics removed
+    // the per-row line-height slack these numbers were tuned against)
     for tok in split_args(opts) {
         let t = tok.trim().replace(' ', "");
         let apply = |v: &str, cur: f64| -> f64 {
@@ -1906,7 +1908,13 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         std::collections::HashMap::new();
     for (r, c, tex) in &nodes {
         let cleaned = clean_tex(tex);
-        let content = if cleaned.contains('\u{E030}') {
+        let content = if let Some((ph, vis)) = cell_phantom_clap(tex) {
+            format!(
+                "context {{ box(width: measure(mi({})).width, align(center + horizon, mi({}))) }}",
+                emit::ts(&clean_tex(&ph)),
+                emit::ts(&clean_tex(&vis))
+            )
+        } else if cleaned.contains('\u{E030}') {
             cell_with_pics(&cleaned, &pics)
         } else if let Some((color, inner)) = cell_textcolor(&cleaned) {
             format!("text(fill: {}, mi({}))", color, emit::ts(&inner))
@@ -2444,6 +2452,59 @@ fn scalebox_label(tex: &str) -> (f64, String) {
 
 /// A cell that is entirely `\textcolor{spec}{content}` -> (typst color,
 /// content). Handles named colors and quiver rgb specs.
+/// The `{\phantom{A}}\hspace{-X}\mathclap{B}\hspace{+X}` idiom: B
+/// shown centered on a box as wide as A (X is hand-tuned to half A's
+/// TeX width, which our fonts won't reproduce - center it properly).
+fn cell_phantom_clap(tex: &str) -> Option<(String, String)> {
+    let b: Vec<char> = tex.trim().chars().collect();
+    let mut i = 0usize;
+    let skip_ws = |b: &[char], mut i: usize| -> usize {
+        while i < b.len() && b[i].is_whitespace() {
+            i += 1;
+        }
+        i
+    };
+    i = skip_ws(&b, i);
+    let braced = b.get(i) == Some(&'{');
+    if braced {
+        i = skip_ws(&b, i + 1);
+    }
+    let word: String = b[i..].iter().take(8).collect();
+    if word != "\\phantom" {
+        return None;
+    }
+    let (a, end) = read_group(&b, skip_ws(&b, i + 8), '{', '}')?;
+    i = skip_ws(&b, end);
+    if braced {
+        if b.get(i) != Some(&'}') {
+            return None;
+        }
+        i = skip_ws(&b, i + 1);
+    }
+    let word: String = b[i..].iter().take(7).collect();
+    if word != "\\hspace" {
+        return None;
+    }
+    let (_, end) = read_group(&b, skip_ws(&b, i + 7), '{', '}')?;
+    i = skip_ws(&b, end);
+    let word: String = b[i..].iter().take(9).collect();
+    if word != "\\mathclap" {
+        return None;
+    }
+    let (inner, end) = read_group(&b, skip_ws(&b, i + 9), '{', '}')?;
+    i = skip_ws(&b, end);
+    let word: String = b[i..].iter().take(7).collect();
+    if word == "\\hspace" {
+        let (_, end) = read_group(&b, skip_ws(&b, i + 7), '{', '}')?;
+        i = skip_ws(&b, end);
+    }
+    let rest: String = b[i..].iter().collect();
+    if !rest.trim().trim_start_matches("\\;").trim().is_empty() {
+        return None;
+    }
+    Some((a, inner))
+}
+
 fn cell_textcolor(tex: &str) -> Option<(String, String)> {
     let t = tex.trim();
     let rest = t.strip_prefix("\\textcolor")?;

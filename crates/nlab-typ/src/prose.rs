@@ -592,8 +592,8 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let negthinspace = scope-or("negthinspace", none)
 #let mitexcite = scope-or("mitexcite", none)
 #let mitexcolor = scope-or("mitexcolor", none)
-#let mitexsizetiny = scope-or("mitexsizetiny", it => text(size: 0.5em, it))
-#let mitexsizescript = scope-or("mitexsizescript", it => text(size: 0.7em, it))
+#let mitexsizetiny = scope-or("mitexsizetiny", it => text(size: 0.65em, it))
+#let mitexsizescript = scope-or("mitexsizescript", it => text(size: 0.75em, it))
 #let mitexsizefoot = scope-or("mitexsizefoot", it => text(size: 0.8em, it))
 #let mitexsizesmall = scope-or("mitexsizesmall", it => text(size: 0.9em, it))
 #let mitexsizelarge = scope-or("mitexsizelarge", it => text(size: 1.2em, it))
@@ -680,7 +680,12 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 // diagrams (fletcher/cetz) draw to frames, which the HTML export
 // would silently drop: freeze them as inline SVG there
 #let nlab-diagram(body) = context {
-  let b = block(breakable: false, body)
+  // inline equations under-report tall ink (frac, stretched lr) via
+  // font line metrics; bounds edges make node boxes hug the glyphs
+  let b = block(breakable: false, {
+    set text(top-edge: "bounds", bottom-edge: "bounds")
+    body
+  })
   if target() == "html" {
     html.elem("div", attrs: (class: "nlab-diagram"), html.frame(b))
   } else {
@@ -810,7 +815,7 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
                 seps.push("column sep=40pt".into());
             }
             if !seps.iter().any(|s| s.starts_with("row") || s.starts_with("sep")) {
-                seps.push("row sep=34pt".into());
+                seps.push("row sep=38pt".into());
             }
             seps.push("xymode".into());
             let opt = format!("[{}]", seps.join(", "));
