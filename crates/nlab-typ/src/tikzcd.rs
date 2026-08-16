@@ -2776,6 +2776,11 @@ fn split_mbox(s: &str) -> String {
 
 
 /// Drop wrappers mitex has no handler for; keep their visible argument.
+/// Public face of clean_tex for the tikzpicture converter.
+pub(crate) fn clean_cell_tex(s: &str) -> String {
+    clean_tex(s)
+}
+
 fn clean_tex(s: &str) -> String {
     let mut s = emit::fix_itex_builtins(s);
     // old-style declaration switches inside \mbox{..} stringify as

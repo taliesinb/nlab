@@ -19,21 +19,29 @@ struct Frame {
     sy: f64,
     tx: f64,
     ty: f64,
+    rot: f64, // radians, applied to coordinates before scaling
     color: String,
     width: f64,
 }
 
 impl Frame {
     fn apply(&self, p: (f64, f64)) -> (f64, f64) {
-        (self.tx + self.sx * p.0, self.ty + self.sy * p.1)
+        let (x, y) = if self.rot != 0.0 {
+            let (s, c) = self.rot.sin_cos();
+            (c * p.0 - s * p.1, s * p.0 + c * p.1)
+        } else {
+            p
+        };
+        (self.tx + self.sx * x, self.ty + self.sy * y)
     }
-    /// Child frame: parent ∘ translate(shift) ∘ scale(s).
+    /// Child frame: parent ∘ translate(shift) ∘ rotate ∘ scale(s).
     fn child(&self, shift: (f64, f64), scale: (f64, f64)) -> Frame {
         Frame {
             tx: self.tx + self.sx * shift.0,
             ty: self.ty + self.sy * shift.1,
             sx: self.sx * scale.0,
             sy: self.sy * scale.1,
+            rot: self.rot,
             color: self.color.clone(),
             width: self.width,
         }
@@ -79,6 +87,103 @@ struct Opts {
     place: Option<String>, // above/below/left/right + combos
     xshift: f64,
     yshift: f64,
+    rotate: f64, // degrees
+}
+
+/// Evaluate `45+240`-style +/- chains (tikz polar angles use them).
+fn eval_num(s: &str) -> Option<f64> {
+    let s = s.trim().trim_start_matches('(').trim_end_matches(')');
+    let mut total = 0.0f64;
+    let mut cur = String::new();
+    let mut sign = 1.0;
+    let mut any = false;
+    for (k, c) in s.chars().enumerate() {
+        if (c == '+' || c == '-') && k > 0 && !cur.trim().is_empty() {
+            total += sign * cur.trim().parse::<f64>().ok()?;
+            sign = if c == '-' { -1.0 } else { 1.0 };
+            cur.clear();
+            any = true;
+        } else {
+            cur.push(c);
+        }
+    }
+    total += sign * cur.trim().parse::<f64>().ok()?;
+    let _ = any;
+    Some(total)
+}
+
+/// `%` comments run to end of line (but `\%` is a literal).
+fn strip_tex_comments(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev = '\0';
+    let mut skipping = false;
+    for c in s.chars() {
+        if skipping {
+            if c == '\n' {
+                skipping = false;
+            }
+            continue;
+        }
+        if c == '%' && prev != '\\' {
+            skipping = true;
+            continue;
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
+}
+
+/// Pull `NAME/.style={...}` definitions out of an option list.
+fn extract_styles(opts: &str) -> (String, HashMap<String, String>) {
+    let mut styles = HashMap::new();
+    let mut out = String::new();
+    let b: Vec<char> = opts.chars().collect();
+    let mut i = 0usize;
+    while i < b.len() {
+        let rest: String = b[i..].iter().collect();
+        if let Some(k) = rest.find("/.style=") {
+            // name runs back to the previous top-level comma
+            let name: String = rest[..k].rsplit(',').next().unwrap_or("").trim().to_string();
+            let mut j = i + k + "/.style=".len();
+            while j < b.len() && b[j].is_whitespace() {
+                j += 1;
+            }
+            let mut spec = String::new();
+            if b.get(j) == Some(&'{') {
+                let mut depth = 0i32;
+                while j < b.len() {
+                    match b[j] {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                j += 1;
+                                break;
+                            }
+                        }
+                        _ => spec.push(b[j]),
+                    }
+                    if depth > 1 {
+                        // keep nested braces verbatim
+                    }
+                    j += 1;
+                }
+            }
+            // keep everything before the name in the remaining options
+            let keep: String = rest[..k].rsplit_once(',').map(|(a, _)| a).unwrap_or("").to_string();
+            out.push_str(&keep);
+            out.push(',');
+            if !name.is_empty() {
+                styles.insert(name, spec);
+            }
+            i = j;
+        } else {
+            out.push_str(&rest);
+            break;
+        }
+    }
+    (out, styles)
 }
 
 fn len_pt(s: &str) -> Option<f64> {
@@ -117,13 +222,15 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
                 o.shift = pr;
             }
         } else if let Some(v) = p.strip_prefix("xscale=") {
-            o.scale.0 *= v.parse().unwrap_or(1.0);
+            o.scale.0 *= eval_num(v).unwrap_or(1.0);
         } else if let Some(v) = p.strip_prefix("yscale=") {
-            o.scale.1 *= v.parse().unwrap_or(1.0);
+            o.scale.1 *= eval_num(v).unwrap_or(1.0);
         } else if let Some(v) = p.strip_prefix("scale=") {
-            let f: f64 = v.parse().unwrap_or(1.0);
+            let f = eval_num(v).unwrap_or(1.0);
             o.scale.0 *= f;
             o.scale.1 *= f;
+        } else if let Some(v) = p.strip_prefix("rotate=") {
+            o.rotate = eval_num(v).unwrap_or(0.0);
         } else if let Some(v) = p.strip_prefix("linewidth=") {
             o.width = len_pt(v);
         } else if p == "thick" {
@@ -185,17 +292,22 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
 }
 
 pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>)> {
+    let body = strip_tex_comments(body);
+    let body = body.as_str();
+    let env_opts = strip_tex_comments(env_opts);
+    let (env_opts, styles) = extract_styles(&env_opts);
     let unit = if body.contains("\\node") {
         UNIT_PT_GRAPH
     } else {
         UNIT_PT
     };
-    let env = parse_opts(env_opts, unit);
+    let env = parse_opts(&env_opts, unit);
     let root = Frame {
         sx: env.scale.0,
         sy: env.scale.1,
         tx: 0.0,
         ty: 0.0,
+        rot: env.rotate.to_radians(),
         color: env.color.unwrap_or_else(|| "black".into()),
         width: env.width.unwrap_or(0.4),
     };
@@ -267,6 +379,9 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             i = ni;
             let o = parse_opts(&optxt, unit);
             let mut f = frames.last().unwrap().child(o.shift, o.scale);
+            if o.rotate != 0.0 {
+                f.rot += o.rotate.to_radians();
+            }
             if let Some(c) = o.color {
                 f.color = c;
             }
@@ -294,7 +409,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             i += if is_coord { 11 } else { 5 };
             let (stmt, ni) = read_stmt(&b, i);
             i = ni;
-            match parse_node_stmt(&stmt, frames.last().unwrap(), is_coord, unit) {
+            match parse_node_stmt(&stmt, frames.last().unwrap(), is_coord, unit, &styles) {
                 Ok((name, nn, op)) => {
                     if let Some(n) = name {
                         nodes.insert(n, nn);
@@ -351,6 +466,7 @@ fn parse_node_stmt(
     frame: &Frame,
     is_coord: bool,
     unit: f64,
+    styles: &HashMap<String, String>,
 ) -> Result<(Option<String>, NamedNode, Option<String>), String> {
     let b: Vec<char> = stmt.chars().collect();
     let mut i = 0usize;
@@ -361,7 +477,9 @@ fn parse_node_stmt(
         i
     };
     i = skip_ws(&b, i);
+    let mut node_opts = String::new();
     if b.get(i) == Some(&'[') {
+        let start = i;
         let mut depth = 0i32;
         while i < b.len() {
             match b[i] {
@@ -377,6 +495,7 @@ fn parse_node_stmt(
             }
             i += 1;
         }
+        node_opts = b[start + 1..i.saturating_sub(1)].iter().collect();
     }
     i = skip_ws(&b, i);
     let mut name = None;
@@ -425,18 +544,72 @@ fn parse_node_stmt(
         }
         body = b[i + 1..k].iter().collect();
     }
+    // resolve style=NAME / bare NAME tokens through the dictionary
+    let mut toks: Vec<String> = Vec::new();
+    for t in node_opts.split(',') {
+        let t = t.trim();
+        let base = t.strip_prefix("style=").unwrap_or(t).trim();
+        if let Some(spec) = styles.get(base) {
+            toks.extend(spec.split(',').map(|x| x.trim().to_string()));
+        } else if !t.is_empty() {
+            toks.push(t.to_string());
+        }
+    }
+    let (mut fill, mut draw, mut circle, mut rectangle, mut inner_sep) =
+        (None::<String>, false, false, false, None::<f64>);
+    for t in &toks {
+        let t = t.replace(' ', "");
+        if let Some(v) = t.strip_prefix("fill=") {
+            if v != "none" && COLORS.contains(&v) {
+                fill = Some(v.to_string());
+            }
+        } else if t == "draw" {
+            draw = true;
+        } else if let Some(v) = t.strip_prefix("draw=") {
+            draw = v != "none";
+        } else if t == "circle" || t == "shape=circle" {
+            circle = true;
+        } else if t == "rectangle" || t == "shape=rectangle" {
+            rectangle = true;
+        } else if let Some(v) = t.strip_prefix("innersep=") {
+            inner_sep = len_pt(v);
+        }
+    }
     let trimmed = body.trim();
+    if circle && trimmed.is_empty() && (fill.is_some() || draw) {
+        // a styled dot (quiver `bn` nodes and friends)
+        let r = (inner_sep.unwrap_or(1.8) + 1.0) / unit;
+        let paint = fill.unwrap_or_else(|| "black".into());
+        let op = format!(
+            "circle(({:.3}, {:.3}), radius: {:.3}, stroke: none, fill: {})",
+            x, y, r, paint
+        );
+        return Ok((name, NamedNode { x, y, hw: r, hh: r }, Some(op)));
+    }
     if is_coord || trimmed.is_empty() {
         return Ok((name, NamedNode { x, y, hw: 0.0, hh: 0.0 }, None));
     }
-    let hw = (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
-    let hh = 8.0 / unit;
-    let op = format!(
-        "content(({:.3}, {:.3}), {})",
-        x,
-        y,
-        node_content(trimmed, None)
-    );
+    let mut hw = (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
+    let mut hh = 8.0 / unit;
+    let op = if rectangle && draw {
+        // boxed node (string-diagram morphisms)
+        hw += 3.0 / unit;
+        hh += 2.0 / unit;
+        format!(
+            "content(({:.3}, {:.3}), frame: \"rect\", stroke: 0.5pt + black, fill: {}, padding: (x: 5pt, y: 4pt), {})",
+            x,
+            y,
+            fill.unwrap_or_else(|| "white".into()),
+            node_content(trimmed, None)
+        )
+    } else {
+        format!(
+            "content(({:.3}, {:.3}), {})",
+            x,
+            y,
+            node_content(trimmed, None)
+        )
+    };
     Ok((name, NamedNode { x, y, hw, hh }, Some(op)))
 }
 
@@ -444,15 +617,15 @@ fn parse_pair(s: &str) -> Option<(f64, f64)> {
     let s = s.trim().trim_start_matches('{').trim_start_matches('(');
     let inner: String = s.chars().take_while(|c| *c != ')').collect();
     if let Some((ang, rad)) = inner.split_once(':') {
-        // polar (angle:radius)
-        let a: f64 = ang.trim().parse().ok()?;
-        let r: f64 = rad.trim().parse().ok()?;
+        // polar (angle:radius); angles may be sums like 45+240
+        let a = eval_num(ang)?;
+        let r = eval_num(rad)?;
         let a = a.to_radians();
         return Some((r * a.cos(), r * a.sin()));
     }
     let mut it = inner.split(',');
-    let x: f64 = it.next()?.trim().parse().ok()?;
-    let y: f64 = it.next()?.trim().parse().ok()?;
+    let x = eval_num(it.next()?)?;
+    let y = eval_num(it.next()?)?;
     Some((x, y))
 }
 
@@ -524,6 +697,13 @@ fn parse_path(
         let inner = inner.trim();
         if let Some(n) = nodes.get(inner) {
             return Some((EndPt { x: n.x, y: n.y, hw: n.hw, hh: n.hh }, j + 1));
+        }
+        // `(name.center)` and friends: an exact point on the node, no
+        // border trimming
+        if let Some((base, _anchor)) = inner.rsplit_once('.') {
+            if let Some(n) = nodes.get(base.trim()) {
+                return Some((EndPt { x: n.x, y: n.y, hw: 0.0, hh: 0.0 }, j + 1));
+            }
         }
         let p = parse_pair(&format!("({inner})"))?;
         let (x, y) = frame.apply(p);
@@ -834,6 +1014,8 @@ fn place_anchor(place: Option<&str>, unit: f64) -> (&'static str, f64, f64) {
 fn node_content(body: &str, default_fill: Option<&str>) -> String {
     let mut fill: Option<String> = None;
     let mut size = 1.0f64;
+    let mut boxed = false;
+    let mut bg: Option<String> = None;
     let mut s = body.trim().to_string();
     fn balanced(b: &[char], start: usize) -> Option<(String, usize)> {
         if b.get(start) != Some(&'{') {
@@ -900,15 +1082,47 @@ fn node_content(body: &str, default_fill: Option<&str>) -> String {
             s = rest.to_string();
             continue;
         }
+        // \colorbox{c}{X}: X on a painted background patch
+        if let Some(rest) = s.strip_prefix("\\colorbox") {
+            let rb: Vec<char> = rest.trim_start().chars().collect();
+            if let Some((c, end)) = balanced(&rb, 0) {
+                bg = Some(c.trim().to_string());
+                let mut k = end;
+                while rb.get(k).map(|c| c.is_whitespace()).unwrap_or(false) {
+                    k += 1;
+                }
+                if let Some((inner, _)) = balanced(&rb, k) {
+                    s = inner;
+                    continue;
+                }
+            }
+        }
+        if let Some(rest) = s.strip_prefix("\\fbox") {
+            let rb: Vec<char> = rest.trim_start().chars().collect();
+            if let Some((inner, _)) = balanced(&rb, 0) {
+                boxed = true;
+                s = inner;
+                continue;
+            }
+        }
         break;
     }
     let math = s.trim().trim_start_matches('$').trim_end_matches('$');
-    let mut inner = format!("mi({})", emit::ts(math));
+    let math = crate::tikzcd::clean_cell_tex(math);
+    let mut inner = format!("mi({})", emit::ts(&math));
     if (size - 1.0).abs() > 0.01 {
         inner = format!("text({:.2}em, {})", size, inner);
     }
     if let Some(f) = fill.or_else(|| default_fill.map(String::from)) {
         inner = format!("text(fill: {}, {})", f, inner);
+    }
+    if boxed || bg.is_some() {
+        inner = format!(
+            "box(stroke: {}, fill: {}, inset: (x: 5pt, y: 4pt), {})",
+            if boxed { "0.5pt + black" } else { "none" },
+            bg.unwrap_or_else(|| "white".into()),
+            inner
+        );
     }
     inner
 }
