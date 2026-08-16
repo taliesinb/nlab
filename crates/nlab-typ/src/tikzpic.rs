@@ -55,6 +55,7 @@ struct NamedNode {
     y: f64,
     hw: f64,
     hh: f64,
+    round: bool, // circular outline: wires land exactly on the rim
 }
 
 // canvas length per tikz unit: true tikz is 1cm = 28.45pt, which the
@@ -93,6 +94,9 @@ struct Opts {
     in_ang: Option<f64>,     // to[in=..] arrival angle, degrees
     underlay: Option<f64>,   // preaction white-line width, pt (crossing gap)
     mid_arrow: bool,         // decoration mark: arrowhead mid-segment
+    mid_pos: f64,            // decoration mark position along the path
+    mid_rev: bool,           // \arrowreversed: head points backward
+    looseness: f64,          // control-point distance multiplier
     latex_tip: bool,         // >=latex / >=stealth: filled arrowheads
 }
 
@@ -105,6 +109,9 @@ fn map_color(s: &str) -> Option<String> {
             "cyan" => return Some("aqua"),
             "magenta" => return Some("fuchsia"),
             "brown" => return Some("maroon"),
+            "grey" => return Some("gray"),
+            "lightgray" | "lightgrey" => return Some("silver"),
+            "darkgray" | "darkgrey" => return Some("gray.darken(35%)"),
             _ => {}
         }
         COLORS.contains(&b).then_some(b)
@@ -227,7 +234,7 @@ fn len_pt(s: &str) -> Option<f64> {
 }
 
 fn parse_opts(opts: &str, unit: f64) -> Opts {
-    let mut o = Opts { scale: (1.0, 1.0), ..Default::default() };
+    let mut o = Opts { scale: (1.0, 1.0), looseness: 1.0, mid_pos: 0.6, ..Default::default() };
     // split on commas not inside {...}
     let mut parts = Vec::new();
     let mut depth = 0i32;
@@ -271,8 +278,14 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
             if let Some(c) = map_color(v) {
                 o.fill = Some(c);
             }
+        } else if let Some(v) = p.strip_prefix("draw=") {
+            if let Some(c) = map_color(v) {
+                o.color = Some(c);
+            }
         } else if let Some(c) = map_color(&p) {
             o.color = Some(c);
+        } else if let Some(v) = p.strip_prefix("looseness=") {
+            o.looseness = v.parse().unwrap_or(1.0);
         } else if let Some(v) = p.strip_prefix("out=") {
             o.out_ang = eval_num(v);
         } else if let Some(v) = p.strip_prefix("in=") {
@@ -290,6 +303,21 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
             // mid-line arrowhead decorations
             if p.contains("markings") {
                 o.mid_arrow = true;
+                if let Some(k) = p.find("atposition") {
+                    let num: String = p[k + 10..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
+                    if let Ok(v) = num.parse() {
+                        o.mid_pos = v;
+                    }
+                }
+                if p.contains("arrowreversed") {
+                    o.mid_rev = true;
+                }
+                if p.contains("{Latex}") || p.contains("{Stealth}") {
+                    o.latex_tip = true;
+                }
             }
         } else if let Some(v) = p.strip_prefix(">=") {
             o.latex_tip = matches!(v, "latex" | "stealth" | "Latex" | "Stealth");
@@ -328,6 +356,8 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
             o.xshift = len_pt(v).unwrap_or(0.0) / unit;
         } else if let Some(v) = p.strip_prefix("yshift=") {
             o.yshift = len_pt(v).unwrap_or(0.0) / unit;
+        } else if p == "auto" {
+            o.place = Some("auto".into());
         } else if matches!(
             p.as_str(),
             "above" | "below" | "left" | "right" | "aboveleft" | "aboveright"
@@ -343,6 +373,20 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
 
 pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>)> {
     let body = strip_tex_comments(body);
+    // \colorlet{name}{spec}: substitute the spec for the name
+    let mut body = body;
+    {
+        let re = regex::Regex::new(r"\\colorlet\{([A-Za-z][A-Za-z0-9]*)\}\{([^}]*)\}").unwrap();
+        let defs: Vec<(String, String)> = re
+            .captures_iter(&body)
+            .map(|c| (c[1].to_string(), c[2].to_string()))
+            .collect();
+        body = re.replace_all(&body, "").to_string();
+        for (name, spec) in defs {
+            let wr = regex::Regex::new(&format!(r"\b{}\b", regex::escape(&name))).unwrap();
+            body = wr.replace_all(&body, spec.as_str()).to_string();
+        }
+    }
     let body = body.as_str();
     let env_opts = strip_tex_comments(env_opts);
     let (env_opts, mut styles) = extract_styles(&env_opts);
@@ -432,7 +476,8 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             let (optxt, ni) = read_bracket(&b, i);
             i = ni;
             let o = parse_opts(&optxt, unit);
-            let mut f = frames.last().unwrap().child(o.shift, o.scale);
+            let shift = (o.shift.0 + o.xshift, o.shift.1 + o.yshift);
+            let mut f = frames.last().unwrap().child(shift, o.scale);
             if o.rotate != 0.0 {
                 f.rot += o.rotate.to_radians();
             }
@@ -515,7 +560,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             i += if is_coord { 11 } else { 5 };
             let (stmt, ni) = read_stmt(&b, i);
             i = ni;
-            match parse_node_stmt(&stmt, frames.last().unwrap(), is_coord, unit, &styles, node_scale) {
+            match parse_node_stmt(&stmt, frames.last().unwrap(), is_coord, unit, &styles, node_scale, &nodes) {
                 Ok((name, nn, op)) => {
                     if let Some(n) = name {
                         nodes.insert(n, nn);
@@ -576,7 +621,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             }
             let (stmt, ni) = read_stmt(&b, i);
             i = ni;
-            match parse_path(&stmt, &frame, &o, &nodes, unit) {
+            match parse_path(&stmt, &frame, &o, &nodes, unit, is_fill) {
                 Ok(mut ops) => out.append(&mut ops),
                 Err(e) => warnings.push(e),
             }
@@ -604,6 +649,7 @@ fn parse_node_stmt(
     unit: f64,
     styles: &HashMap<String, String>,
     node_scale: f64,
+    nodes: &HashMap<String, NamedNode>,
 ) -> Result<(Option<String>, NamedNode, Option<String>), String> {
     let b: Vec<char> = stmt.chars().collect();
     let mut i = 0usize;
@@ -658,8 +704,13 @@ fn parse_node_stmt(
         j += 1;
     }
     let inner: String = b[i + 1..j].iter().collect();
-    let p = parse_pair(&format!("({inner})")).ok_or("bad node coord")?;
-    let (x, y) = frame.apply(p);
+    let at_name = inner.trim().split('.').next().unwrap_or("").trim();
+    let (x, y) = if let Some(n) = nodes.get(at_name) {
+        (n.x, n.y)
+    } else {
+        let p = parse_pair(&format!("({inner})")).ok_or("bad node coord")?;
+        frame.apply(p)
+    };
     i = j + 1;
     i = skip_ws(&b, i);
     // the name may also follow the coordinate: \node at (x,y) (n) {..}
@@ -726,17 +777,19 @@ fn parse_node_stmt(
         // a styled dot (quiver `bn` nodes and friends)
         let r = (inner_sep.unwrap_or(1.8) + 1.0) / unit;
         let paint = fill.unwrap_or_else(|| "black".into());
+        let stroke = if draw { "0.5pt + black" } else { "none" };
         let op = format!(
-            "circle(({:.3}, {:.3}), radius: {:.3}, stroke: none, fill: {})",
-            x, y, r, paint
+            "circle(({:.3}, {:.3}), radius: {:.3}, stroke: {}, fill: {})",
+            x, y, r, stroke, paint
         );
-        return Ok((name, NamedNode { x, y, hw: r, hh: r }, Some(op)));
+        return Ok((name, NamedNode { x, y, hw: r, hh: r, round: true }, Some(op)));
     }
     if is_coord || trimmed.is_empty() {
-        return Ok((name, NamedNode { x, y, hw: 0.0, hh: 0.0 }, None));
+        return Ok((name, NamedNode { x, y, hw: 0.0, hh: 0.0, round: false }, None));
     }
     let mut hw = node_scale * (crate::tikzcd::est_halfwidth_pt(trimmed) + 3.0) / unit;
     let mut hh = node_scale * 8.0 / unit;
+    let mut round = false;
     let op = if rectangle && draw {
         // boxed node (string-diagram morphisms)
         hw += 3.0 / unit;
@@ -750,8 +803,9 @@ fn parse_node_stmt(
         )
     } else if circle && draw {
         // circled node on a wire crossing
-        hw += 2.0 / unit;
+        hw = hw * 0.7 + 2.0 / unit;
         hh = hw;
+        round = true;
         format!(
             "content(({:.3}, {:.3}), frame: \"circle\", stroke: 0.5pt + black, fill: {}, padding: {}pt, {})",
             x,
@@ -781,7 +835,7 @@ fn parse_node_stmt(
             )
         }
     };
-    Ok((name, NamedNode { x, y, hw, hh }, Some(op)))
+    Ok((name, NamedNode { x, y, hw, hh, round }, Some(op)))
 }
 
 fn parse_pair(s: &str) -> Option<(f64, f64)> {
@@ -811,6 +865,7 @@ struct EndPt {
     y: f64,
     hw: f64,
     hh: f64,
+    round: bool,
 }
 
 fn parse_path(
@@ -819,6 +874,7 @@ fn parse_path(
     opts: &Opts,
     nodes: &HashMap<String, NamedNode>,
     unit: f64,
+    fill_mode: bool,
 ) -> Result<Vec<String>, String> {
     let width = opts.width.unwrap_or(0.4);
     let color = opts.color.clone().unwrap_or_else(|| "black".into());
@@ -857,6 +913,9 @@ fn parse_path(
     let mut i = 0usize;
     let mut ops = Vec::new();
     let mut last: Option<EndPt> = None;
+    // fill mode: segments accumulate into one closed filled path
+    let mut segs: Vec<String> = Vec::new();
+    let mut path_start: Option<EndPt> = None;
     // labels waiting to ride the NEXT segment (tikz `to node {..} (b)`)
     let mut pending_label: Option<(String, Opts)> = None;
 
@@ -874,18 +933,18 @@ fn parse_path(
         let inner: String = b[i + 1..j].iter().collect();
         let inner = inner.trim();
         if let Some(n) = nodes.get(inner) {
-            return Some((EndPt { x: n.x, y: n.y, hw: n.hw, hh: n.hh }, j + 1));
+            return Some((EndPt { x: n.x, y: n.y, hw: n.hw, hh: n.hh, round: n.round }, j + 1));
         }
         // `(name.center)` and friends: an exact point on the node, no
         // border trimming
         if let Some((base, _anchor)) = inner.rsplit_once('.') {
             if let Some(n) = nodes.get(base.trim()) {
-                return Some((EndPt { x: n.x, y: n.y, hw: 0.0, hh: 0.0 }, j + 1));
+                return Some((EndPt { x: n.x, y: n.y, hw: 0.0, hh: 0.0, round: false }, j + 1));
             }
         }
         let p = parse_pair(&format!("({inner})"))?;
         let (x, y) = frame.apply(p);
-        Some((EndPt { x, y, hw: 0.0, hh: 0.0 }, j + 1))
+        Some((EndPt { x, y, hw: 0.0, hh: 0.0, round: false }, j + 1))
     };
 
     // trim `d` canvas units off point `p` toward `q`, plus p's border
@@ -895,8 +954,8 @@ fn parse_path(
         let (ux, uy) = (dx / len, dy / len);
         let border = if p.hw > 0.0 || p.hh > 0.0 {
             let k = (ux.abs() / p.hw.max(1e-6)).max(uy.abs() / p.hh.max(1e-6));
-            // wires TOUCH small round dots; text nodes keep a gap
-            let pad = if p.hw.max(p.hh) <= 3.5 / unit { 0.0 } else { 2.0 / unit };
+            // wires TOUCH round rims and small dots; text keeps a gap
+            let pad = if p.round || p.hw.max(p.hh) <= 3.5 / unit { 0.0 } else { 2.0 / unit };
             (1.0 / k) + pad
         } else {
             0.0
@@ -914,6 +973,9 @@ fn parse_path(
         }
         if b[i] == '(' {
             let (e, ni) = read_end(&b, i).ok_or("bad coordinate")?;
+            if path_start.is_none() {
+                path_start = Some(e);
+            }
             last = Some(e);
             i = ni;
             continue;
@@ -984,6 +1046,25 @@ fn parse_path(
         }
         if rest.starts_with("to") || rest.starts_with("--") {
             i += 2;
+            {
+                let mut k = i;
+                while k < b.len() && b[k].is_whitespace() {
+                    k += 1;
+                }
+                if b[k..].iter().take(5).collect::<String>() == "cycle" {
+                    // close the path back to its first point
+                    if let (Some(st), Some(l)) = (path_start, last) {
+                        let geom = format!("line({}, {}", fmt_pt((l.x + cdx, l.y + cdy)), fmt_pt((st.x + cdx, st.y + cdy)));
+                        if fill_mode {
+                            segs.push(format!("{})", geom));
+                        } else {
+                            ops.push(format!("{}, {})", geom, stroke));
+                        }
+                    }
+                    i = k + 5;
+                    continue;
+                }
+            }
             // optional to[bend ...] / to[out=..,in=..] options
             let mut seg_bend = opts.bend;
             let mut seg_out = opts.out_ang;
@@ -1058,14 +1139,30 @@ fn parse_path(
             let p1 = trim(e, s0, opts.shorten_end / unit);
             let p0 = (p0.0 + cdx, p0.1 + cdy);
             let p1 = (p1.0 + cdx, p1.1 + cdy);
+            let mut seg_curve: Option<((f64, f64), (f64, f64))> = None;
             if let (Some(oa), Some(ia)) = (seg_out, seg_in) {
                 // tikz to[out=..,in=..]: cubic with tangent directions;
-                // control distance ~0.39 x chord (looseness 1)
+                // control distance ~0.39 x chord (looseness 1).
+                // Chord-direction trimming is wrong for a curve: at a
+                // small dot it pokes out the far side - end at center
+                let small = |n: EndPt| n.hw > 0.0 && n.hw.max(n.hh) <= 3.5 / unit;
+                let p0 = if small(s0) { (s0.x + cdx, s0.y + cdy) } else { p0 };
+                let p1 = if small(e) { (e.x + cdx, e.y + cdy) } else { p1 };
                 let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
                 let d = 0.39 * dx.hypot(dy);
                 let (oa, ia) = (oa.to_radians(), ia.to_radians());
                 let c1 = (p0.0 + d * oa.cos(), p0.1 + d * oa.sin());
                 let c2 = (p1.0 + d * ia.cos(), p1.1 + d * ia.sin());
+                seg_curve = Some((c1, c2));
+                if fill_mode {
+                    segs.push(format!(
+                        "bezier({}, {}, {}, {})",
+                        fmt_pt(p0), fmt_pt(p1), fmt_pt(c1), fmt_pt(c2)
+                    ));
+                    last = Some(e);
+                    i = ni;
+                    continue;
+                }
                 if let Some(w) = opts.underlay {
                     // the white-underlay crossing trick: a fat white
                     // stroke below erases whatever this wire crosses
@@ -1088,15 +1185,29 @@ fn parse_path(
                     mark
                 ));
             } else if seg_bend != 0.0 {
-                // symmetric quadratic-ish bezier: control points offset
-                // perpendicular (left of travel = +90 deg CCW)
+                // tikz bend left=B: tangents rotated B off the chord,
+                // control distance 0.3915 x len x looseness - smooth
+                // through 90-degree caps where a flat dome kinks
                 let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
                 let len = dx.hypot(dy).max(1e-6);
-                let (nx, ny) = (-dy / len, dx / len);
-                let sag = len * (seg_bend.abs().to_radians() / 2.0).sin() * 0.7
-                    * seg_bend.signum();
-                let c1 = (p0.0 + dx / 3.0 + nx * sag, p0.1 + dy / 3.0 + ny * sag);
-                let c2 = (p0.0 + 2.0 * dx / 3.0 + nx * sag, p0.1 + 2.0 * dy / 3.0 + ny * sag);
+                let ang = dy.atan2(dx);
+                let brad = seg_bend.to_radians();
+                let d = 0.3915 * len * opts.looseness * (1.0 + 0.9 * (brad.abs() / std::f64::consts::PI));
+                let oa = ang + brad;
+                let ia = ang + std::f64::consts::PI - brad;
+                let c1 = (p0.0 + d * oa.cos(), p0.1 + d * oa.sin());
+                let c2 = (p1.0 + d * ia.cos(), p1.1 + d * ia.sin());
+                seg_curve = Some((c1, c2));
+                seg_curve = Some((c1, c2));
+                if fill_mode {
+                    segs.push(format!(
+                        "bezier({}, {}, {}, {})",
+                        fmt_pt(p0), fmt_pt(p1), fmt_pt(c1), fmt_pt(c2)
+                    ));
+                    last = Some(e);
+                    i = ni;
+                    continue;
+                }
                 ops.push(format!(
                     "bezier({}, {}, {}, {}, {}{})",
                     fmt_pt(p0),
@@ -1107,6 +1218,12 @@ fn parse_path(
                     mark
                 ));
             } else {
+                if fill_mode {
+                    segs.push(format!("line({}, {})", fmt_pt(p0), fmt_pt(p1)));
+                    last = Some(e);
+                    i = ni;
+                    continue;
+                }
                 if let Some(w) = opts.underlay {
                     ops.push(format!(
                         "line({}, {}, stroke: {}pt + white)",
@@ -1116,19 +1233,25 @@ fn parse_path(
                     ));
                 }
                 if opts.mid_arrow {
-                    // decoration mark: arrowhead riding at ~60%
-                    let m = (
-                        p0.0 + 0.62 * (p1.0 - p0.0),
-                        p0.1 + 0.62 * (p1.1 - p0.1),
-                    );
+                    // full line, then a short marked stub rides at the
+                    // decoration position (reversed heads point back)
+                    let t = opts.mid_pos;
+                    let at = |t: f64| {
+                        (p0.0 + t * (p1.0 - p0.0), p0.1 + t * (p1.1 - p0.1))
+                    };
+                    let (sa, sb) = if opts.mid_rev {
+                        (at((t + 0.08).min(1.0)), at(t))
+                    } else {
+                        (at((t - 0.08).max(0.0)), at(t))
+                    };
+                    ops.push(format!("line({}, {}, {})", fmt_pt(p0), fmt_pt(p1), stroke));
                     ops.push(format!(
                         "line({}, {}, {}, mark: (end: {}))",
-                        fmt_pt(p0),
-                        fmt_pt(m),
+                        fmt_pt(sa),
+                        fmt_pt(sb),
                         stroke,
                         tip
                     ));
-                    ops.push(format!("line({}, {}, {})", fmt_pt(m), fmt_pt(p1), stroke));
                 } else {
                     ops.push(format!(
                         "line({}, {}, {}{})",
@@ -1140,9 +1263,31 @@ fn parse_path(
                 }
             }
             if let Some((tex, lo)) = pending_label.take() {
-                let mx = (p0.0 + p1.0) / 2.0 + lo.xshift;
-                let my = (p0.1 + p1.1) / 2.0 + lo.yshift;
-                let (anchor, gx, gy) = place_anchor(lo.place.as_deref().or(opts.place.as_deref()), unit);
+                // labels ride the CURVE midpoint, not the chord
+                let (bx, by) = match seg_curve {
+                    Some((c1, c2)) => (
+                        (p0.0 + 3.0 * c1.0 + 3.0 * c2.0 + p1.0) / 8.0,
+                        (p0.1 + 3.0 * c1.1 + 3.0 * c2.1 + p1.1) / 8.0,
+                    ),
+                    None => ((p0.0 + p1.0) / 2.0, (p0.1 + p1.1) / 2.0),
+                };
+                let mx = bx + lo.xshift;
+                let my = by + lo.yshift;
+                let mut place = lo.place.as_deref().or(opts.place.as_deref());
+                // tikz `auto`: beside the line, left of travel
+                if place == Some("auto") {
+                    let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
+                    let len = dx.hypot(dy).max(1e-6);
+                    let (nx, ny) = (-dy / len, dx / len);
+                    place = Some(if ny.abs() >= nx.abs() {
+                        if ny > 0.0 { "above" } else { "below" }
+                    } else if nx > 0.0 {
+                        "right"
+                    } else {
+                        "left"
+                    });
+                }
+                let (anchor, gx, gy) = place_anchor(place, unit);
                 ops.push(format!(
                     "content(({:.3}, {:.3}), anchor: \"{}\", {})",
                     mx + gx,
@@ -1247,6 +1392,18 @@ fn parse_path(
         }
         // unknown token: skip a char (tolerate stray text)
         i += 1;
+    }
+    if fill_mode && !segs.is_empty() {
+        let paint = opts
+            .fill
+            .clone()
+            .or_else(|| opts.color.clone())
+            .unwrap_or_else(|| "black".into());
+        ops.push(format!(
+            "merge-path(close: true, stroke: none, fill: {}, {{\n    {}\n  }})",
+            paint,
+            segs.join("\n    ")
+        ));
     }
     if ops.is_empty() {
         Err("empty path".into())

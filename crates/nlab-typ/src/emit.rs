@@ -373,6 +373,9 @@ pub(crate) fn nativize_calls(code: &str) -> String {
         match mitex::convert_math_itex(&tex, None) {
             Ok(res) if !res.trim().is_empty() => {
                 let res = res.trim().replace('\n', " ");
+                // restriction bars: mitex spaces `|` like a relation,
+                // but `p|_X` is an ordinary tight atom in LaTeX
+                let res = res.replace("| _(", "#math.class(\"normal\", sym.bar.v)_(");
                 if &c[2] == "mitex" {
                     format!("$ {} $", res) // display/block math
                 } else {
