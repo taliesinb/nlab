@@ -12,7 +12,41 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
     let b: Vec<char> = body.chars().collect();
     let mut out = String::new();
     let mut i = 0usize;
+    let mut twocell_n = 0usize;
     while i < b.len() {
+        // \rtwocell^f_g{a} and friends: a bent arrow pair with a 2-cell
+        if b[i] == '\\' {
+            let word: String = b[i + 1..].iter().take(8).collect();
+            let dir = match word.as_str() {
+                w if w.starts_with("rtwocell") => Some('r'),
+                w if w.starts_with("ltwocell") => Some('l'),
+                w if w.starts_with("dtwocell") => Some('d'),
+                w if w.starts_with("utwocell") => Some('u'),
+                _ => None,
+            };
+            if let Some(dir) = dir {
+                i += 9;
+                let (top, bot, center, ni) = twocell_labels(&b, i);
+                i = ni;
+                twocell_n += 1;
+                let (ta, tb) = (
+                    format!("xy2a{}", twocell_n),
+                    format!("xy2b{}", twocell_n),
+                );
+                out.push_str(&format!(
+                    "\\ar[{d}, bend left=40, \"{{{top}}}\"{{name={ta}}}]\
+\\ar[{d}, bend right=40, \"{{{bot}}}\"{{swap, name={tb}}}]\
+\\ar[Rightarrow, from={ta}, to={tb}, \"{{{center}}}\"]",
+                    d = dir,
+                    top = top,
+                    bot = bot,
+                    ta = ta,
+                    tb = tb,
+                    center = center
+                ));
+                continue;
+            }
+        }
         let is_ar = b[i] == '\\'
             && b[i + 1..].iter().take(2).collect::<String>() == "ar"
             && matches!(b.get(i + 3), Some('@') | Some('[') | Some('('));
@@ -28,6 +62,21 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
         // decorations: @{style} @/curve/ @<shift> @(out,in)
         while b.get(i) == Some(&'@') {
             i += 1;
+            if b.get(i).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                // @2 / @3: line multiplicity; an optional {style} follows
+                i += 1;
+                if b.get(i) == Some(&'{') {
+                    let (style, end) = balanced(&b, i, '{', '}');
+                    i = end;
+                    for o in style_opts(&style) {
+                        if o != "Rightarrow" {
+                            opts.push(o);
+                        }
+                    }
+                }
+                opts.push("Rightarrow".into());
+                continue;
+            }
             match b.get(i) {
                 Some('{') => {
                     let (style, end) = balanced(&b, i, '{', '}');
@@ -90,7 +139,33 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                     t.push(b[j]);
                     j += 1;
                 }
-                Some((t, j + 1))
+                let mut k = j + 1;
+                // "name"+(dx,dy): encode the offset into the name so
+                // the tikzcd resolver can nudge the anchor point
+                let mut out = t;
+                while matches!(b.get(k), Some('+') | Some('-'))
+                    && b.get(k + 1) == Some(&'(')
+                {
+                    let neg = b[k] == '-';
+                    let start = k + 2;
+                    while k < b.len() && b[k] != ')' {
+                        k += 1;
+                    }
+                    let inner: String = b[start..k].iter().collect();
+                    k += 1;
+                    let mut it = inner.split(',');
+                    let dx: f64 = it
+                        .next()
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0.0);
+                    let dy: f64 = it
+                        .next()
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0.0);
+                    let sign = if neg { -1.0 } else { 1.0 };
+                    out = format!("{}@{}@{}", out, sign * dx, sign * dy);
+                }
+                Some((out, k))
             };
             let (src_a, ni) = read_q(b, i)?;
             let mut k = ni;
@@ -216,6 +291,54 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
     out
 }
 
+/// `^{top}_{bot}{center}` after a twocell macro (labels optional,
+/// single tokens allowed); returns (top, bot, center, next index).
+fn twocell_labels(b: &[char], mut i: usize) -> (String, String, String, usize) {
+    let mut top = String::new();
+    let mut bot = String::new();
+    let read_tok = |b: &[char], mut i: usize| -> (String, usize) {
+        if b.get(i) == Some(&'{') {
+            let (t, e) = balanced(b, i, '{', '}');
+            (t, e)
+        } else if b.get(i) == Some(&'\\') {
+            let mut t = String::from('\\');
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_alphabetic() {
+                t.push(b[j]);
+                j += 1;
+            }
+            (t, j)
+        } else if let Some(&c) = b.get(i) {
+            i += 1;
+            (c.to_string(), i)
+        } else {
+            (String::new(), i)
+        }
+    };
+    loop {
+        while i < b.len() && b[i].is_whitespace() {
+            i += 1;
+        }
+        match b.get(i) {
+            Some('^') => {
+                let (t, ni) = read_tok(b, i + 1);
+                top = t;
+                i = ni;
+            }
+            Some('_') => {
+                let (t, ni) = read_tok(b, i + 1);
+                bot = t;
+                i = ni;
+            }
+            Some('{') => {
+                let (c, ni) = balanced(b, i, '{', '}');
+                return (top, bot, c, ni);
+            }
+            _ => return (top, bot, String::new(), i),
+        }
+    }
+}
+
 /// Read a balanced group starting at `open` position; returns (inner,
 /// index past the close).
 fn balanced(b: &[char], start: usize, open: char, close: char) -> (String, usize) {
@@ -249,6 +372,9 @@ fn style_opts(style: &str) -> Vec<String> {
     match s.as_str() {
         "=" => vec!["equals".into()],
         "=>" => vec!["Rightarrow".into()],
+        "==>" => vec!["Rightarrow".into(), "dashed".into()],
+        "<<-" => vec!["<<-".into()],
+        "<-" => vec!["<-".into()],
         "|->" => vec!["mapsto".into()],
         "->>" => vec!["two heads".into()],
         ".>" => vec!["dotted".into()],

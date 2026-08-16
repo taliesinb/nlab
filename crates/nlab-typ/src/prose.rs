@@ -592,6 +592,12 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let negthinspace = scope-or("negthinspace", none)
 #let mitexcite = scope-or("mitexcite", none)
 #let mitexcolor = scope-or("mitexcolor", none)
+#let mitexsim = scope-or("mitexsim", math.scripts(sym.tilde.op))
+#let mitexsimeq = scope-or("mitexsimeq", math.scripts(sym.tilde.eq))
+#let mitexbacksimeq = scope-or("mitexbacksimeq", math.scripts(sym.tilde.eq.rev))
+#let mitexcong = scope-or("mitexcong", math.scripts(sym.tilde.equiv))
+#let mitexapprox = scope-or("mitexapprox", math.scripts(sym.approx))
+#let mitexequiv = scope-or("mitexequiv", math.scripts(sym.equiv))
 #let phantom = scope-or("phantom", none)
 #let mathop = scope-or("mathop", none)
 #let Set = scope-or("Set", none)
@@ -608,6 +614,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let rotatebox = scope-or("rotatebox", (deg, it) => it)
 #let raisebox = scope-or("raisebox", (d, it) => it)
 #let boxed = scope-or("boxed", it => box(stroke: 0.5pt, inset: 2.5pt, $it$))
+#let fbox = scope-or("fbox", it => box(stroke: 0.5pt, inset: 3pt, it))
 #let textrm = scope-or("textrm", it => math.upright(it))
 #let textup = scope-or("textup", it => math.upright(it))
 #let textbf = scope-or("textbf", it => math.bold(it))
@@ -742,21 +749,37 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     // xymatrix drawings translate to tikzcd vocabulary and ride the
     // same fletcher pipeline
     let xy_re = regex::Regex::new(
-        r"(?s)\\begin\{xymatrix(@[^}]*)?\}(.*?)\\end\{xymatrix[^}]*\}",
+        r"(?s)\\begin\{xymatrix([^}]*)\}(.*?)\\end\{xymatrix[^}]*\}",
     )
     .unwrap();
     let src = xy_re
         .replace_all(&src, |c: &regex::Captures| {
-            // @C=50pt@R=12pt spacing riders -> tikzcd column/row sep
+            // spacing riders: @C=50pt, @R12pt, @C+2pc, @=18pt ...
             let mut seps: Vec<String> = Vec::new();
-            for m in regex::Regex::new(r"@([CR]?)=?([0-9.]+[a-z]+)")
-                .unwrap()
-                .captures_iter(c.get(1).map(|m| m.as_str()).unwrap_or(""))
-            {
+            let rider = regex::Regex::new(
+                r"@([CR]?)\s*([+-])?=?\s*([0-9.]+)\s*(pt|pc|mm|cm|em|ex)",
+            )
+            .unwrap();
+            for m in rider.captures_iter(c.get(1).map(|m| m.as_str()).unwrap_or("")) {
+                let v: f64 = m[3].parse().unwrap_or(0.0);
+                let unit = match &m[4] {
+                    "pc" => 12.0,
+                    "mm" => 2.845,
+                    "cm" => 28.45,
+                    "em" => 11.0,
+                    "ex" => 4.4,
+                    _ => 1.0,
+                };
+                let mut pt = v * unit;
+                match m.get(2).map(|x| x.as_str()) {
+                    Some("+") => pt += 24.0,
+                    Some("-") => pt = (24.0 - pt).max(4.0),
+                    _ => {}
+                }
                 match &m[1] {
-                    "C" => seps.push(format!("column sep={}", &m[2])),
-                    "R" => seps.push(format!("row sep={}", &m[2])),
-                    _ => seps.push(format!("sep={}", &m[2])),
+                    "C" => seps.push(format!("column sep={}pt", pt)),
+                    "R" => seps.push(format!("row sep={}pt", pt)),
+                    _ => seps.push(format!("sep={}pt", pt)),
                 }
             }
             // xy grids default to equal 2pc separations both ways
@@ -766,6 +789,7 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
             if !seps.iter().any(|s| s.starts_with("row") || s.starts_with("sep")) {
                 seps.push("row sep=24pt".into());
             }
+            seps.push("xymode".into());
             let opt = format!("[{}]", seps.join(", "));
             format!(
                 "\\begin{{tikzcd}}{}{}\\end{{tikzcd}}",

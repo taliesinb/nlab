@@ -280,7 +280,9 @@ impl Arrow {
                 "-".into()
             };
         }
-        if self.dashed && self.mark == "->" {
+        if self.dashed && self.mark == "=>" {
+            "==>".into()
+        } else if self.dashed && self.mark == "->" {
             "-->".into()
         } else if self.dotted && self.mark == "->" {
             "..>".into()
@@ -842,6 +844,7 @@ fn parse_style(arrow: &mut Arrow, p: &str) {
         "no head" => arrow.no_head = true,
         "equals" | "equal" | "Equal" => arrow.mark = "=".into(),
         "->>" | "two heads" | "twoheadrightarrow" => arrow.mark = "->>".into(),
+        "<<-" => arrow.mark = "<<-".into(),
         ">->" | "tail" | "rightarrowtail" => arrow.mark = ">->".into(),
         "hook" | "hookrightarrow" => arrow.mark = "hook->".into(),
         "hook'" => arrow.mark = "hook'->".into(),
@@ -1366,7 +1369,16 @@ fn coord_str(rc: (f64, f64)) -> String {
 fn resolve(c: &Coord, anchors: &std::collections::HashMap<String, (f64, f64)>) -> Option<(f64, f64)> {
     match c {
         Coord::Cell(r, c) => Some((*r as f64, *c as f64)),
-        Coord::Name(n) => anchors.get(n).copied(),
+        Coord::Name(n) => {
+            // NAME@dx@dy: xy-style point offsets (pt-ish units) riding
+            // a named anchor; scaled by nominal grid steps
+            let mut parts = n.split('@');
+            let base = parts.next().unwrap_or(n);
+            let p = anchors.get(base).copied()?;
+            let dx: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let dy: f64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            Some((p.0 - dy / 40.0, p.1 + dx / 50.0))
+        }
     }
 }
 
@@ -1534,9 +1546,11 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
     }
 
     // tikzcd widens column separation so horizontal edge labels fit;
-    // fletcher doesn't, so pad middle columns with invisible spacers
+    // fletcher doesn't, so pad middle columns with invisible spacers.
+    // xy does NOT widen (labels overflow), so xymatrix-derived sources
+    // skip this
     let mut spacers: Vec<(i32, i32, f64)> = Vec::new();
-    {
+    if !opts.contains("xymode") {
         let xs_now = {
             let mut cs = vec![0.0];
             for i in 1..colw.len() {
@@ -2471,7 +2485,12 @@ fn push_label_args(args: &mut Vec<String>, l: &Label, centered: bool, color: Opt
         tex.trim().trim_matches(|c| c == '{' || c == '}' || c == ' '),
         "\\lrcorner" | "\\ulcorner" | "\\llcorner" | "\\urcorner"
     );
-    let size = if corner { size.max(1.0) } else { size };
+    // big 2-cell glyphs shrink illegibly at label size
+    let size = if corner || tex.contains("Downarrow") || tex.contains("Uparrow") {
+        size.max(1.0)
+    } else {
+        size
+    };
     let mut content = format!("mi({})", emit::ts(&clean_tex(&tex)));
     if let Some(deg) = l.rotate {
         // tikz rotates counterclockwise for positive angles, typst clockwise
