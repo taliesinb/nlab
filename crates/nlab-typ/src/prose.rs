@@ -617,6 +617,8 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let fbox = it => box(stroke: 0.5pt, inset: (x: 6pt, y: 5pt), it)
 #let textrm = scope-or("textrm", it => math.upright(it))
 #let textup = scope-or("textup", it => math.upright(it))
+#let textit = scope-or("textit", it => math.italic(it))
+#let mitexcolorbox = scope-or("mitexcolorbox", (c, it) => it)
 #let textbf = scope-or("textbf", it => math.bold(it))
 #let mitexbold = scope-or("mitexbold", it => math.bold(it))
 #let mitexcal = scope-or("mitexcal", it => math.cal(it))
@@ -757,12 +759,12 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
             // spacing riders: @C=50pt, @R12pt, @C+2pc, @=18pt ...
             let mut seps: Vec<String> = Vec::new();
             let rider = regex::Regex::new(
-                r"@([CR]?)\s*([+-])?=?\s*([0-9.]+)\s*(pt|pc|mm|cm|em|ex)",
+                r"@([CR]?)\s*(?:(=)\s*)?([+-])?\s*([0-9.]+)\s*(pt|pc|mm|cm|em|ex)",
             )
             .unwrap();
             for m in rider.captures_iter(c.get(1).map(|m| m.as_str()).unwrap_or("")) {
-                let v: f64 = m[3].parse().unwrap_or(0.0);
-                let unit = match &m[4] {
+                let v: f64 = m[4].parse().unwrap_or(0.0);
+                let unit = match &m[5] {
                     "pc" => 12.0,
                     "mm" => 2.845,
                     "cm" => 28.45,
@@ -771,10 +773,13 @@ pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
                     _ => 1.0,
                 };
                 let mut pt = v * unit;
-                match m.get(2).map(|x| x.as_str()) {
-                    Some("+") => pt += 24.0,
-                    Some("-") => pt = (24.0 - pt).max(4.0),
-                    _ => {}
+                // @C+2pc adds to the default; @C=+80pt just sets
+                if m.get(2).is_none() {
+                    match m.get(3).map(|x| x.as_str()) {
+                        Some("+") => pt += 24.0,
+                        Some("-") => pt = (24.0 - pt).max(4.0),
+                        _ => {}
+                    }
                 }
                 match &m[1] {
                     "C" => seps.push(format!("column sep={}pt", pt)),

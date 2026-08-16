@@ -65,6 +65,7 @@ struct Arrow {
     out_angle: Option<f64>, // tikz out= departure angle
     in_angle: Option<f64>,  // tikz in= arrival angle
     loop_dist: Option<f64>, // tikz distance= for loops, pt
+    sagitta: Option<f64>,   // xy @/^Npc/ absolute bulge, signed pt
     opacity: Option<f64>,
     to_path: Option<(Vec<PathPt>, Option<(String, f64)>)>,
     label_pos_hint: Option<f64>, // bare "near start" seen before a label
@@ -260,6 +261,7 @@ impl Arrow {
             out_angle: None,
             in_angle: None,
             loop_dist: None,
+            sagitta: None,
             opacity: None,
             to_path: None,
             label_pos_hint: None,
@@ -280,9 +282,7 @@ impl Arrow {
                 "-".into()
             };
         }
-        if self.dashed && self.mark == "=>" {
-            "==>".into()
-        } else if self.dashed && self.mark == "->" {
+        if self.dashed && self.mark == "->" {
             "-->".into()
         } else if self.dotted && self.mark == "->" {
             "..>".into()
@@ -845,6 +845,7 @@ fn parse_style(arrow: &mut Arrow, p: &str) {
         "equals" | "equal" | "Equal" => arrow.mark = "=".into(),
         "->>" | "two heads" | "twoheadrightarrow" => arrow.mark = "->>".into(),
         "<<-" => arrow.mark = "<<-".into(),
+        "<-hook" => arrow.mark = "<-hook".into(),
         ">->" | "tail" | "rightarrowtail" => arrow.mark = ">->".into(),
         "hook" | "hookrightarrow" => arrow.mark = "hook->".into(),
         "hook'" => arrow.mark = "hook'->".into(),
@@ -944,6 +945,10 @@ fn parse_style_kv(arrow: &mut Arrow, p: &str) {
         arrow.line_width = Some(0.8);
     } else if let Some(v) = norm.strip_prefix("opacity=") {
         arrow.opacity = format!("0{v}").parse().ok().or_else(|| v.parse().ok());
+    } else if let Some(v) = norm.strip_prefix("sagittaleft=") {
+        arrow.sagitta = Some(len_pt(v));
+    } else if let Some(v) = norm.strip_prefix("sagittaright=") {
+        arrow.sagitta = Some(-len_pt(v));
     } else if let Some(v) = norm.strip_prefix("distance=") {
         arrow.loop_dist = Some(len_pt(v));
     } else if let Some(v) = norm.strip_prefix("in=") {
@@ -1308,6 +1313,19 @@ fn measure_nodes(labels_ts: &[String]) -> Option<Vec<(f64, f64)>> {
     Some(nums.chunks(2).map(|c| (c[0], c[1])).collect())
 }
 
+/// Labels render at 0.75em; size switches shrink further.
+fn label_size_factor(tex: &str) -> f64 {
+    if tex.contains("\\tiny") {
+        0.5
+    } else if tex.contains("\\scriptsize") {
+        0.6
+    } else if tex.contains("\\small") {
+        0.7
+    } else {
+        0.75
+    }
+}
+
 pub(crate) fn est_halfwidth_pt(tex: &str) -> f64 {
     fn row_width(row: &str) -> f64 {
         let b: Vec<char> = row.chars().collect();
@@ -1562,7 +1580,8 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
                 if label_is_blank(&l.tex) {
                     continue;
                 }
-                let lw = 2.0 * est_halfwidth_pt(&clean_tex(&l.tex)) * 0.75;
+                let lw = 2.0 * est_halfwidth_pt(&clean_tex(&l.tex))
+                    * label_size_factor(&l.tex);
                 need_sp = need_sp.max((0.8 * lw).min(160.0));
             }
         }
@@ -1595,7 +1614,8 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
             }) else {
                 continue;
             };
-            let lw = 2.0 * est_halfwidth_pt(&clean_tex(&l.tex)) * 0.75;
+            let lw = 2.0 * est_halfwidth_pt(&clean_tex(&l.tex))
+                * label_size_factor(&l.tex);
             let (lo, hi) = (*c1.min(c2), *c1.max(c2));
             let span = xs_now[hi as usize] - xs_now[lo as usize]
                 - colw[lo as usize] / 2.0
@@ -1977,6 +1997,14 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         let (x2, y2) = (grid.x(to.1), grid.y(to.0));
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = dx.hypot(dy);
+        let mut a = a.clone();
+        if let (Some(s), None) = (a.sagitta, a.bend) {
+            // xy curvature is an absolute bulge; convert to an angle
+            // against this chord length
+            let deg = (2.0 * (4.0 * s.abs() / len.max(20.0)).atan()).to_degrees();
+            a.bend = Some(deg.clamp(8.0, 60.0) * s.signum());
+        }
+        let a = &a;
         let mut loop_bend = a.loop_bend;
         if len < 0.01 && loop_bend.is_none() {
             if let Some(out) = a.out_angle {
@@ -2288,6 +2316,11 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
         if a.stroke_none {
             args.push("stroke: none".into());
         } else {
+            // fletcher's "==>" shorthand is the TRIPLE arrow; a dashed
+            // double keeps "=>" and dashes the stroke
+            if a.dashed && a.mark == "=>" {
+                args.push("stroke: (dash: \"dashed\")".into());
+            }
             let color = a.color.as_ref().map(|c| match a.opacity {
                 Some(o) => {
                     format!("{}.transparentize({}%)", c, fmt_f((1.0 - o) * 100.0))

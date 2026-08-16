@@ -16,16 +16,30 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
     while i < b.len() {
         // \rtwocell^f_g{a} and friends: a bent arrow pair with a 2-cell
         if b[i] == '\\' {
-            let word: String = b[i + 1..].iter().take(8).collect();
-            let dir = match word.as_str() {
-                w if w.starts_with("rtwocell") => Some('r'),
-                w if w.starts_with("ltwocell") => Some('l'),
-                w if w.starts_with("dtwocell") => Some('d'),
-                w if w.starts_with("utwocell") => Some('u'),
-                _ => None,
+            let word: String = b[i + 1..].iter().take(9).collect();
+            let (dir, wlen) = match word.as_str() {
+                w if w.starts_with("drtwocell") => (Some("dr"), 10),
+                w if w.starts_with("urtwocell") => (Some("ur"), 10),
+                w if w.starts_with("dltwocell") => (Some("dl"), 10),
+                w if w.starts_with("ultwocell") => (Some("ul"), 10),
+                w if w.starts_with("rtwocell") => (Some("r"), 9),
+                w if w.starts_with("ltwocell") => (Some("l"), 9),
+                w if w.starts_with("dtwocell") => (Some("d"), 9),
+                w if w.starts_with("utwocell") => (Some("u"), 9),
+                _ => (None, 0),
             };
             if let Some(dir) = dir {
-                i += 9;
+                i += wlen;
+                // optional <width> spec: \drtwocell<5.5>...
+                while i < b.len() && b[i].is_whitespace() {
+                    i += 1;
+                }
+                if b.get(i) == Some(&'<') {
+                    while i < b.len() && b[i] != '>' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
                 let (top, bot, center, ni) = twocell_labels(&b, i);
                 i = ni;
                 twocell_n += 1;
@@ -250,10 +264,10 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
                 _ => {}
             }
             match toward {
-                t if t <= -3 => mods.push("very near start".into()),
-                -2 | -1 => mods.push("near start".into()),
-                1 | 2 => mods.push("near end".into()),
-                t if t >= 3 => mods.push("very near end".into()),
+                t if t <= -2 => mods.push("very near start".into()),
+                -1 => mods.push("near start".into()),
+                1 => mods.push("near end".into()),
+                t if t >= 2 => mods.push("very near end".into()),
                 _ => {}
             }
             if let Some(n) = name {
@@ -373,6 +387,7 @@ fn style_opts(style: &str) -> Vec<String> {
         "=" => vec!["equals".into()],
         "=>" => vec!["Rightarrow".into()],
         "==>" => vec!["Rightarrow".into(), "dashed".into()],
+        _ if s.contains("<-") && s.contains(")") => vec!["<-hook".into()],
         "<<-" => vec!["<<-".into()],
         "<-" => vec!["<-".into()],
         "|->" => vec!["mapsto".into()],
@@ -392,15 +407,24 @@ fn curve_opt(spec: &str) -> Option<String> {
         '_' => ("right", &s[1..]),
         _ => return None,
     };
+    let unit = if rest.ends_with("pc") {
+        12.0
+    } else if rest.ends_with("ex") {
+        4.4
+    } else if rest.ends_with("em") {
+        11.0
+    } else {
+        1.0
+    };
     let n: f64 = rest
         .trim_end_matches("pc")
         .trim_end_matches("ex")
         .trim_end_matches("em")
+        .trim_end_matches("pt")
         .trim()
         .parse()
         .unwrap_or(1.0);
-    let deg = (12.0 + 16.0 * n).clamp(20.0, 75.0);
-    Some(format!("bend {}={}", side, deg as i64))
+    Some(format!("sagitta {}={}pt", side, n * unit))
 }
 
 /// `@<+.5ex>` lateral shift -> tikzcd shift left/right (ex ~ 4pt).
