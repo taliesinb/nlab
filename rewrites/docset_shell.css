@@ -43,10 +43,14 @@ img, svg { max-width: 100%; height: auto; }
 figure { margin: 1em auto; text-align: center; }
 figcaption { font-size: 0.88em; color: var(--muted); }
 blockquote {
-  margin: 1em 0;
+  margin: 0.5em 0;
   padding-left: 1em;
   border-left: 3px solid var(--rule);
   color: var(--muted);
+  font-size: 0.95em;
+}
+li blockquote {
+  margin: 0.3em 0 0.4em;
 }
 math { font-size: 1.06em; }
 .nlab-diagram svg { margin: 0 auto; }

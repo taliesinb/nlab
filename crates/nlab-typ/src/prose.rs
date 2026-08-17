@@ -596,8 +596,22 @@ fn markdown_to_typst(src: &str) -> String {
             Event::End(TagEnd::Item) => {
                 item_depth = item_depth.saturating_sub(1);
             }
-            Event::Start(Tag::BlockQuote(_)) => out.push_str("\n#quote(block: true)["),
-            Event::End(TagEnd::BlockQuote(_)) => out.push_str("]\n"),
+            Event::Start(Tag::BlockQuote(_)) => {
+                // inside a list item the quote must stay in the item
+                // (a column-0 block would terminate the typst list)
+                if item_depth > 0 {
+                    out.push_str(" #quote(block: true)[");
+                } else {
+                    out.push_str("\n#quote(block: true)[");
+                }
+            }
+            Event::End(TagEnd::BlockQuote(_)) => {
+                if item_depth > 0 {
+                    out.push_str("] ");
+                } else {
+                    out.push_str("]\n");
+                }
+            }
             Event::Start(Tag::Link { dest_url, .. }) => {
                 // the trailing `;` (pushed at End) terminates the hash
                 // expression, so following ".Word" or "(..)" is text
