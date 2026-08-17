@@ -705,6 +705,61 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
     if let Some(sig) = signature_rows(grid) {
         return ("ok".into(), Some(emit_signature(&sig)));
     }
+    // a row of nothing but \vdots sitting DIRECTLY above/below an
+    // object row hugs that row (the source relies on tight array
+    // spacing); demote those cells to flush floats
+    let mut grid_owned;
+    let mut grid = grid;
+    let mut vdots_flush: Vec<(usize, usize, bool)> = Vec::new();
+    {
+        let mut marks: Vec<(usize, usize, bool)> = Vec::new();
+        for r in 0..grid.len() {
+            let mut any = false;
+            let mut all = true;
+            for cell in &grid[r] {
+                match kind(cell) {
+                    "o" => {
+                        let t = cget(cell, "tex").unwrap_or("").trim();
+                        if t == "\\vdots" || t == "⋮" {
+                            any = true;
+                        } else {
+                            all = false;
+                        }
+                    }
+                    "e" => {}
+                    _ => all = false,
+                }
+            }
+            if !(any && all) {
+                continue;
+            }
+            let obj_row = |rr: &Vec<Cell>| {
+                rr.iter().any(|c| {
+                    kind(c) == "o"
+                        && cget(c, "tex").map_or(false, |t| {
+                            t.trim() != "\\vdots" && t.trim() != "⋮"
+                        })
+                })
+            };
+            let below = r + 1 < grid.len() && obj_row(&grid[r + 1]);
+            let above = r > 0 && obj_row(&grid[r - 1]);
+            if below || above {
+                for (c, cell) in grid[r].iter().enumerate() {
+                    if kind(cell) == "o" {
+                        marks.push((r, c, below));
+                    }
+                }
+            }
+        }
+        if !marks.is_empty() {
+            grid_owned = grid.to_vec();
+            for (r, c, _) in &marks {
+                grid_owned[*r][*c] = grid::cell("e");
+            }
+            grid = &grid_owned;
+            vdots_flush = marks;
+        }
+    }
     // objects in row-major insertion order (Python dict semantics)
     let mut obj_order: Vec<RC> = Vec::new();
     let mut obj_tex: std::collections::HashMap<RC, String> = Default::default();
@@ -1039,6 +1094,18 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
             x,
             y,
             ts(tex)
+        ));
+    }
+    for (r, c, below) in &vdots_flush {
+        let x = interp(&cs, *c);
+        let y = if *below {
+            interp(&rs, r + 1) - 0.42
+        } else {
+            interp(&rs, r - 1) + 0.42
+        };
+        lines.push(format!(
+            "  node(({:.2}, {:.2}), mi(\"\\\\vdots\")),",
+            x, y
         ));
     }
 
