@@ -871,7 +871,30 @@ pub(crate) fn parse_formula_grid(tex: &str) -> Result<Vec<Vec<Cell>>, String> {
     merge_annotations(&mut grid);
     let unknown = grid.iter().flatten().filter(|c| kind(c) == "?").count();
     if unknown > 0 {
-        return Err(format!("cells:{}?", unknown));
+        if std::env::var("NLAB_DEBUG_CELLS").is_ok() {
+            for c in grid.iter().flatten().filter(|c| kind(c) == "?") {
+                eprintln!("UNKNOWN CELL: {:?}", get(c, "tex").unwrap_or(""));
+            }
+        }
+        // an unclassifiable cell (object text with a top-level \simeq,
+        // glyph pairs like \downarrow\uparrow) typesets in place as an
+        // object — the server renders these arrays as plain tables
+        // anyway. Only bail when the grid is mostly unknowns.
+        let filled = grid
+            .iter()
+            .flatten()
+            .filter(|c| kind(c) != "e")
+            .count();
+        if unknown * 2 > filled {
+            return Err(format!("cells:{}?", unknown));
+        }
+        for c in grid.iter_mut().flatten() {
+            if kind(c) == "?" {
+                let tex = get(c, "tex").unwrap_or("").to_string();
+                *c = cell("o");
+                set(c, "tex", tex);
+            }
+        }
     }
     Ok(grid)
 }

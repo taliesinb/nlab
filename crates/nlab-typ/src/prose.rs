@@ -1434,12 +1434,37 @@ terminology|notn|notation|conjecture|assumption|exercise";
         })
         .to_string();
     // a stashed block (diagram, math) whose source line was indented
-    // must not become an indented code block under cmark
-    // (3 spaces: never code at top level, still list-item continuation)
-    let src = regex::Regex::new(r"(?m)^[ \t]{4,}(\u{E000}\d+\u{E001})[ \t\r]*$")
-        .unwrap()
-        .replace_all(&src, "   $1")
-        .to_string();
+    // must not become an indented code block under cmark. Dedent to 3
+    // spaces — but ONLY outside list items: inside an item the
+    // indentation is what KEEPS the block in the item.
+    let src = {
+        let ph_line = regex::Regex::new(r"^[ \t]{4,}(\u{E000}\d+\u{E001})[ \t\r]*$")
+            .unwrap();
+        let marker = regex::Regex::new(r"^([*+-]|\d+[.)])([ \t]+)").unwrap();
+        let mut list_indent: Option<usize> = None;
+        let mut out: Vec<String> = Vec::new();
+        for line in src.lines() {
+            let trimmed = line.trim_start_matches([' ', '\t']);
+            let indent = line.len() - trimmed.len();
+            if !trimmed.is_empty() {
+                if let Some(m) = marker.captures(trimmed) {
+                    list_indent =
+                        Some(indent + m[1].len() + m[2].len());
+                } else if indent == 0 {
+                    list_indent = None;
+                }
+            }
+            if let Some(c) = ph_line.captures(line) {
+                let in_list = matches!(list_indent, Some(ci) if indent + 1 >= ci);
+                if !in_list {
+                    out.push(format!("   {}", &c[1]));
+                    continue;
+                }
+            }
+            out.push(line.to_string());
+        }
+        out.join("\n")
+    };
     let body = markdown_to_typst(&src);
     // resolve placeholders (escape pass never touches PUA chars); a
     // literal ( or [ right after a #call() would chain as another

@@ -1074,11 +1074,13 @@ pub(crate) fn classify(grid: &[Vec<Cell>]) -> String {
 // ----------------------------------------------- wrapped/no-array path
 
 static DIAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\\[sn][ew][aA]rrow").unwrap());
-static SPACING_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*$").unwrap());
+static SPACING_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(\\qquad|\\quad|\\;|\\,|\\!|\\phantom\{[^{}]*\}|[\s.,;:])*$")
+        .unwrap()
+});
 static SEP_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"^(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*(=|\\simeq|\\cong|\\text\{[^{}]{1,24}\})?(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*$",
+        r"^(\\qquad|\\quad|\\;|\\,|\\!|\\phantom\{[^{}]*\}|[\s.,;:])*(=|\\simeq|\\cong|\\text\{[^{}]{1,24}\})?(\\qquad|\\quad|\\;|\\,|\\!|\\phantom\{[^{}]*\}|[\s.,;:])*$",
     )
     .unwrap()
 });
