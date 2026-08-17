@@ -1175,10 +1175,37 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "$1 $2")
         .to_string();
+    // an unclosed ** inside a table cell (author typo) leaves literal
+    // stars in the rendered cell; drop the lone marker
+    let src = src
+        .lines()
+        .map(|l| {
+            if !l.trim_start().starts_with('|') {
+                return l.to_string();
+            }
+            l.split('|')
+                .map(|seg| {
+                    if seg.matches("**").count() % 2 == 1 {
+                        seg.replacen("**", "", 1)
+                    } else {
+                        seg.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     // a non-breaking space after ATX hashes is not a heading to cmark
     let src = regex::Regex::new(r"(?m)^(#+)\u{A0}+")
         .unwrap()
         .replace_all(&src, "$1 ")
+        .to_string();
+    // Maruku also accepts headings with NO space after the hashes
+    // ("##Idea"); cmark needs one
+    let src = regex::Regex::new(r"(?m)^(#{1,6})([^#\s])")
+        .unwrap()
+        .replace_all(&src, "$1 $2")
         .to_string();
     // Maruku attribute-definition lines `{:name: attrs}`; expand their
     // references `{: name}` in fences to the stored attributes
