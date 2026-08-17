@@ -115,17 +115,21 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
 fn math_to_typst(tex: &str, display: bool) -> String {
     // \begin{svg}[[!include SVG rightarrow]]\end{svg} idiom: an inline
     // arrow image used as a stackrel base
-    let tex = regex::Regex::new(r"(?s)\\begin\{svg\}.*?\\end\{svg\}")
-        .unwrap()
-        .replace_all(tex, |c: &regex::Captures| {
-            if c[0].contains("left") {
-                "\\longleftarrow"
-            } else {
-                "\\longrightarrow"
-            }
-            .to_string()
-        })
-        .to_string();
+    let tex = regex::Regex::new(
+        r"(?s)\\begin\{svg\}.*?\\end\{svg\}(?:\\includegraphics\[[^\]]*\]\{[^}]*\})?",
+    )
+    .unwrap()
+    .replace_all(tex, |c: &regex::Captures| {
+        if c[0].contains("left") {
+            "\\longleftarrow"
+        } else if c[0].contains("vert") {
+            "\\downarrow"
+        } else {
+            "\\longrightarrow"
+        }
+        .to_string()
+    })
+    .to_string();
     let tex = tex.as_str();
     // numeric character references inside math ($C &#8696; D$)
     let tex = regex::Regex::new(r"&#(\d+);")
