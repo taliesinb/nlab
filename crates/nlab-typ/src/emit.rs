@@ -385,11 +385,50 @@ pub(crate) fn nativize_calls(code: &str) -> String {
                 // empty accent/function calls choke typst: fill with a
                 // zero-width base
                 let res = res.replace("()", "(zws)");
+                // reversed floor/ceil pairs (author typos) are parse
+                // errors: typst matches ⌊..⌋ like brackets
+                let res = regex::Regex::new(r"⌋([^⌊⌋⌈⌉]*)⌊")
+                    .unwrap()
+                    .replace_all(&res, "#sym.floor.r;$1#sym.floor.l;")
+                    .to_string();
+                let res = regex::Regex::new(r"⌉([^⌊⌋⌈⌉]*)⌈")
+                    .unwrap()
+                    .replace_all(&res, "#sym.ceil.r;$1#sym.ceil.l;")
+                    .to_string();
                 // \atop with a missing side leaves a dangling comma
                 let res = regex::Regex::new(r"atop\(([^()]*), *\)")
                     .unwrap()
                     .replace_all(&res, "atop(${1}, zws)")
                     .to_string();
+                // cross-cell \left/\right (or similar) leaves the
+                // converted fragment with unbalanced parens; that is a
+                // guaranteed typst parse error, so degrade instead
+                let mut depth = 0i64;
+                let mut bad = false;
+                let mut prev = ' ';
+                for ch in res.chars() {
+                    if prev != '\\' {
+                        match ch {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth -= 1;
+                                if depth < 0 {
+                                    bad = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    prev = ch;
+                }
+                if bad || depth != 0 {
+                    let mut short = tex.trim().replace('\n', " ");
+                    if short.len() > 120 {
+                        short.truncate(120);
+                        short.push('\u{2026}');
+                    }
+                    return format!("{}nlab-tex-fallback({:?})", &c[1], short);
+                }
                 if &c[2] == "mitex" {
                     format!("$ {} $", res) // display/block math
                 } else {

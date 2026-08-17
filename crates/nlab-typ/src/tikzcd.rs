@@ -2621,6 +2621,15 @@ fn cell_with_pics(tex: &str, pics: &[String]) -> String {
         .unwrap()
         .replace_all(tex, "$1")
         .to_string();
+    // an earlier pass may have eaten the \raisebox{..} prefix already,
+    // leaving a bare brace group around the marker
+    let tex = regex::Regex::new(r"\{\s*(\u{E030}\d+\u{E031})\s*\}")
+        .unwrap()
+        .replace_all(&tex, "$1")
+        .to_string();
+    if std::env::var("NLAB_DEBUG_PICS").is_ok() {
+        eprintln!("CELL_WITH_PICS input: {:?}", tex);
+    }
     let mut parts: Vec<String> = Vec::new();
     let mut pos = 0usize;
     for m in re.captures_iter(&tex) {

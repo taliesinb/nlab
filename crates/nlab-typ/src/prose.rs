@@ -87,6 +87,13 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
             }
             if let Some(j) = found {
                 let tex: String = b[i + open..j].iter().collect();
+                // an unclosed $$ (author typo) pairs with the NEXT
+                // block's opener and swallows prose and env fences
+                if tex.contains("=--") || tex.contains("+--") || tex.len() > 4000 {
+                    out.push(b[i]);
+                    i += 1;
+                    continue;
+                }
                 let (tex, anchors) = split_math_labels(&tex);
                 out.push_str(
                     &stash.put(format!("{}{}", math_to_typst(&tex, display), anchors)),
@@ -241,8 +248,27 @@ fn wiki_target_url(name: &str) -> String {
 }
 
 fn extract_wiki(src: &str, stash: &mut Stash) -> String {
+    // [text]([[Name:file]]) — a file wiki-link in destination position
+    // must become a bare URL, not a stashed #link call
+    let src = regex::Regex::new(r"\]\(\[\[([^\[\]|]+?):file\]\]\)")
+        .unwrap()
+        .replace_all(src, |c: &regex::Captures| {
+            format!(
+                "](https://ncatlab.org/nlab/files/{})",
+                c[1].trim().replace(' ', "+")
+            )
+        })
+        .to_string();
+    // a wiki-link inside a URL destination (`](http://..#[[X]])`) is
+    // just part of the URL text; drop the brackets
+    let src = regex::Regex::new(r"\]\(([^()\s\[\]]+)\[\[([^\[\]]+)\]\]\)")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            format!("]({}{})", &c[1], c[2].replace(' ', "%20"))
+        })
+        .to_string();
     let re = regex::Regex::new(r"\[\[([^\[\]]+)\]\]").unwrap();
-    re.replace_all(src, |c: &regex::Captures| {
+    re.replace_all(&src, |c: &regex::Captures| {
         let inner = &c[1];
         if let Some(rest) = inner.strip_prefix('!') {
             // directives: skip includes/redirects in the page body
@@ -317,7 +343,7 @@ fn extract_fences(src: &str, stash: &mut Stash) -> String {
             open_stack.push(true);
             continue;
         }
-        if t == "=--" {
+        if t.starts_with("=--") && t[1..].chars().all(|c| c == '-') {
             if skip_depth > 0 {
                 skip_depth -= 1;
                 continue;
@@ -439,6 +465,12 @@ fn escape_typst(text: &str) -> String {
     for c in text.chars() {
         match c {
             '#' | '*' | '_' | '`' | '$' | '[' | ']' | '<' | '>' | '@' | '\\' | '\'' | '"' => {
+                out.push('\\');
+                out.push(c);
+            }
+            // "//" starts a typst comment even in markup ("/*" is
+            // already broken up by the '*' escape above)
+            '/' if out.ends_with('/') => {
                 out.push('\\');
                 out.push(c);
             }
@@ -574,6 +606,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #import "@preview/cetz:0.3.4"
 // natively-emitted math calls the same helpers the mitex plugin's eval
 // scope provides; bind the ones the converter can reference
+#let mitexref(body) = [(#body)]
 #let mitexdisplay = mitex-scope.at("mitexdisplay")
 #let mitexinline = mitex-scope.at("mitexinline")
 #let mitexmathbf = mitex-scope.at("mitexmathbf")
