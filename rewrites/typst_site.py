@@ -13,6 +13,7 @@ Usage: typst_site.py [--out DIR]
 import argparse
 import pathlib
 import re
+import shutil
 import unicodedata
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -110,6 +111,17 @@ def main():
             f' #h(1fr) #text(gray, "{pid}") \\'
         )
     (out / "_index.typ").write_text("\n".join(index) + "\n")
+
+    # static stylesheets for HTML rendering of these pages
+    assets = out / "assets"
+    assets.mkdir(exist_ok=True)
+    shutil.copy(
+        pathlib.Path(__file__).parent / "docset_shell.css",
+        assets / "nlab-typst.css",
+    )
+    typst_css = ROOT / "build/typ-assets/typst.css"
+    if typst_css.exists():
+        shutil.copy(typst_css, assets / "typst.css")
     print(f"{len(rows)} pages -> {out}")
 
 
