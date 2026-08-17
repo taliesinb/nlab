@@ -942,8 +942,20 @@ pub(crate) fn absorb_spills(grid: &mut [Vec<Cell>]) {
                         }
                     }
                 } else {
+                    // no object to absorb into: keep the arrow glyph
+                    // with the text ("\simeq \prod C" trailing cells)
+                    let cmd = get(&grid[r][c], "cmd")
+                        .map(|m| format!("\\{}", m))
+                        .unwrap_or_default();
+                    let full = if cmd.is_empty() {
+                        tex
+                    } else if dc > 0 {
+                        format!("{} {}", cmd, tex)
+                    } else {
+                        format!("{} {}", tex, cmd)
+                    };
                     let mut q = cell("?");
-                    set(&mut q, "tex", tex);
+                    set(&mut q, "tex", full);
                     grid[r][c] = q;
                 }
             }
