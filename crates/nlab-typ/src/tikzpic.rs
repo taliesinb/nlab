@@ -642,7 +642,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
     let body = body.as_str();
     let env_opts = strip_tex_comments(env_opts);
     let (env_opts, mut styles) = extract_styles(&env_opts);
-    let unit = if body.contains("\\node") {
+    let unit = if body.contains("\\node") || body.contains("\\coordinate") {
         UNIT_PT_GRAPH
     } else {
         UNIT_PT
@@ -910,7 +910,9 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             }
             let (stmt, ni) = read_stmt(&b, i);
             i = ni;
-            match parse_path(&stmt, &frame, &o, &nodes, unit, is_fill) {
+            let fill_path = is_fill || is_filldraw || (o.fill.is_some() && !is_path);
+            let stroke_path = !is_fill && !is_path;
+            match parse_path(&stmt, &frame, &o, &nodes, unit, fill_path, stroke_path) {
                 Ok(mut ops) => out.append(&mut ops),
                 Err(e) => warnings.push(e),
             }
@@ -1327,6 +1329,7 @@ fn parse_path(
     nodes: &HashMap<String, NamedNode>,
     unit: f64,
     fill_mode: bool,
+    stroke_path: bool,
 ) -> Result<Vec<String>, String> {
     let width = opts.width.unwrap_or(0.4);
     let color = opts.color.clone().unwrap_or_else(|| "black".into());
@@ -1644,7 +1647,8 @@ fn parse_path(
                         let geom = format!("line({}, {}", fmt_pt((l.x + cdx, l.y + cdy)), fmt_pt((st.x + cdx, st.y + cdy)));
                         if fill_mode {
                             segs.push(format!("{})", geom));
-                        } else {
+                        }
+                        if stroke_path {
                             ops.push(format!("{}, {})", geom, stroke));
                         }
                     }
@@ -1760,9 +1764,11 @@ fn parse_path(
                         "bezier({}, {}, {}, {})",
                         fmt_pt(p0), fmt_pt(p1), fmt_pt(c1), fmt_pt(c2)
                     ));
-                    last = Some(e);
-                    i = ni;
-                    continue;
+                    if !stroke_path {
+                        last = Some(e);
+                        i = ni;
+                        continue;
+                    }
                 }
                 if opts.path_only {
                     if opts.mid_arrow {
@@ -1835,9 +1841,11 @@ fn parse_path(
                         "bezier({}, {}, {}, {})",
                         fmt_pt(p0), fmt_pt(p1), fmt_pt(c1), fmt_pt(c2)
                     ));
-                    last = Some(e);
-                    i = ni;
-                    continue;
+                    if !stroke_path {
+                        last = Some(e);
+                        i = ni;
+                        continue;
+                    }
                 }
                 if opts.path_only {
                     if opts.mid_arrow {
@@ -1868,9 +1876,11 @@ fn parse_path(
             } else {
                 if fill_mode {
                     segs.push(format!("line({}, {})", fmt_pt(p0), fmt_pt(p1)));
-                    last = Some(e);
-                    i = ni;
-                    continue;
+                    if !stroke_path {
+                        last = Some(e);
+                        i = ni;
+                        continue;
+                    }
                 }
                 if opts.path_only {
                     // \path draws nothing; only decorations show
@@ -2076,11 +2086,14 @@ fn parse_path(
             .clone()
             .or_else(|| opts.color.clone())
             .unwrap_or_else(|| "black".into());
-        ops.push(format!(
-            "merge-path(close: true, stroke: none, fill: {}, {{\n    {}\n  }})",
-            paint,
-            segs.join("\n    ")
-        ));
+        ops.insert(
+            0,
+            format!(
+                "merge-path(close: true, stroke: none, fill: {}, {{\n    {}\n  }})",
+                paint,
+                segs.join("\n    ")
+            ),
+        );
     }
     if ops.is_empty() {
         Err("empty path".into())
