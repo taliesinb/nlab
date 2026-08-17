@@ -28,6 +28,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import unicodedata
 import urllib.parse
 from pathlib import Path
 
@@ -93,7 +94,46 @@ def name_variants(name: str) -> set[str]:
             variants.add(key[: len(key) - len(suffix)] + singular)
     # Hyphenation is not a meaningful distinction ("J-rule" vs "J rule").
     variants |= {v.replace("-", " ") for v in variants}
+    # joined form: "bi-holomorphism" == "biholomorphism" == "base point"
+    # style words. Safe because trimming only ever compares names of the
+    # SAME page.
+    variants |= {re.sub(r"[-\s]", "", v) for v in variants}
+    # apostrophes ("D'Auria" vs "DAuria") and superscript carets ("OP^2")
+    variants |= {re.sub(r"['’^_]", "", v) for v in variants}
+    # diacritic folding ("Dàodéjīng" vs "Daodejing"): strip combining
+    # marks only — symbols with no ascii decomposition (†, ∞) survive
+    def fold(v: str) -> str:
+        return "".join(
+            c for c in unicodedata.normalize("NFKD", v)
+            if not unicodedata.combining(c)
+        )
+    variants |= {fold(v) for v in variants}
+    # British spellings ("equaliser", "parametrisation", "fibred")
+    def american(v: str) -> str:
+        w = re.sub(r"is(ation|ing|e[drs]?)($|[^a-z])", r"iz\1\2", v)
+        w = re.sub(r"ys(ation|ing|e[drs]?)($|[^a-z])", r"yz\1\2", w)
+        for br, us in (("fibred", "fibered"), ("fibre", "fiber"),
+                       ("centre", "center"), ("colour", "color"),
+                       ("neighbourhood", "neighborhood"),
+                       ("labelled", "labeled"), ("modelled", "modeled")):
+            w = w.replace(br, us)
+        return w
+    variants |= {american(v) for v in variants}
     return variants
+
+
+def one_letter_insertion(a: str, b: str) -> bool:
+    """True when the longer of a,b is the shorter plus ONE inserted ascii
+    letter ('urysohn'/'uryson'). Single-letter SUBSTITUTIONS are not
+    matched: 'w-boson' vs 'z-boson' are genuinely different names."""
+    if abs(len(a) - len(b)) != 1:
+        return False
+    if len(a) < len(b):
+        a, b = b, a
+    i = 0
+    while i < len(b) and a[i] == b[i]:
+        i += 1
+    return a[i].isalpha() and a[i].isascii() and a[i + 1:] == b[i:]
 
 
 def person_tokens(name: str) -> list[str]:
@@ -147,6 +187,7 @@ def trim_aliases(canonical_name: str, aliases: list[str],
 
     kept = []
     seen = name_variants(canonical_name)
+    kept_keys = {norm_key(canonical_name)}
     known = set(person_tokens(canonical_name))
     pseen = {" ".join(person_tokens(canonical_name))}
     for alias in sorted(
@@ -165,6 +206,14 @@ def trim_aliases(canonical_name: str, aliases: list[str],
         variants = name_variants(alias)
         if variants & seen:
             continue
+        # transliteration wobbles: one letter inserted somewhere
+        # ('urysohn' vs 'uryson', 'fibred' vs 'fibered')
+        akey = norm_key(alias)
+        if akey.isascii() and len(akey) >= 6 and any(
+                k.isascii() and one_letter_insertion(akey, k)
+                for k in kept_keys):
+            continue
+        kept_keys.add(akey)
         seen |= variants
         kept.append(alias)
     return kept
