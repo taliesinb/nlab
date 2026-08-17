@@ -153,7 +153,7 @@ fn caption_typst(text: &str) -> String {
         let whole = m.get(0).unwrap();
         out.push_str(&escape_typst(&text[pos..whole.start()]));
         out.push_str(&format!(
-            "#link(\"{}\")[{}]",
+            "#link(\"{}\")[{}];",
             &m[2],
             escape_typst(&m[1])
         ));
@@ -192,7 +192,7 @@ fn image_typst(url: &str, caption_html: &str) -> String {
         } else {
             caption
         };
-        format!("#link(\"{}\")[{}]", url, text)
+        format!("#link(\"{}\")[{}];", url, text)
     }
 }
 
@@ -252,20 +252,20 @@ fn extract_wiki(src: &str, stash: &mut Stash) -> String {
         if let Some(file) = target.strip_suffix(":file") {
             let text = text.strip_suffix(":file").unwrap_or(text);
             return stash.put(format!(
-                "#link(\"https://ncatlab.org/nlab/files/{}\")[{}]",
+                "#link(\"https://ncatlab.org/nlab/files/{}\")[{}];",
                 file.trim().replace(' ', "+"),
                 escape_typst(text)
             ));
         }
         if let Some(id) = page_index().get(&target.trim().to_lowercase()) {
             return stash.put(format!(
-                "#nlab-page(\"{}\")[{}]",
+                "#nlab-page(\"{}\")[{}];",
                 id,
                 escape_typst(text)
             ));
         }
         stash.put(format!(
-            "#link(\"{}\")[{}]",
+            "#link(\"{}\")[{}];",
             wiki_target_url(target),
             escape_typst(text)
         ))
@@ -456,6 +456,7 @@ fn markdown_to_typst(src: &str) -> String {
     let mut skip_heading = false; // h6 titles inside envs are dropped
     let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut item_depth = 0usize;
+    let mut link_semi: Vec<bool> = Vec::new();
     for ev in parser {
         match ev {
             Event::Start(Tag::Heading { level, .. }) => {
@@ -485,10 +486,12 @@ fn markdown_to_typst(src: &str) -> String {
                     out.push('\n');
                 }
             }
-            Event::Start(Tag::Emphasis) => out.push('_'),
-            Event::End(TagEnd::Emphasis) => out.push('_'),
-            Event::Start(Tag::Strong) => out.push('*'),
-            Event::End(TagEnd::Strong) => out.push('*'),
+            // function forms: the marker forms (*bold*) require word
+            // boundaries and fall apart in text like `**4**4 (2011)`
+            Event::Start(Tag::Emphasis) => out.push_str("#emph["),
+            Event::End(TagEnd::Emphasis) => out.push_str("];"),
+            Event::Start(Tag::Strong) => out.push_str("#strong["),
+            Event::End(TagEnd::Strong) => out.push_str("];"),
             Event::Start(Tag::List(start)) => list_stack.push(start),
             Event::End(TagEnd::List(_)) => {
                 list_stack.pop();
@@ -509,16 +512,27 @@ fn markdown_to_typst(src: &str) -> String {
             Event::Start(Tag::BlockQuote(_)) => out.push_str("\n#quote(block: true)["),
             Event::End(TagEnd::BlockQuote(_)) => out.push_str("]\n"),
             Event::Start(Tag::Link { dest_url, .. }) => {
-                if dest_url.is_empty() {
+                // the trailing `;` (pushed at End) terminates the hash
+                // expression, so following ".Word" or "(..)" is text
+                let dest = dest_url.trim_matches(|c| c == '{' || c == '}');
+                if dest.is_empty() {
                     out.push_str("#[");
-                } else if let Some(anchor) = dest_url.strip_prefix('#') {
+                    link_semi.push(false);
+                } else if let Some(anchor) = dest.strip_prefix('#') {
                     out.push_str(&format!("#nlab-anchor(\"{}\")[", anchor));
+                    link_semi.push(true);
                 } else {
-                    let dest = dest_url.replace('\\', "%5C").replace('"', "%22");
+                    let dest = dest.replace('\\', "%5C").replace('"', "%22");
                     out.push_str(&format!("#link(\"{}\")[", dest));
+                    link_semi.push(true);
                 }
             }
-            Event::End(TagEnd::Link) => out.push(']'),
+            Event::End(TagEnd::Link) => {
+                out.push(']');
+                if link_semi.pop().unwrap_or(false) {
+                    out.push(';');
+                }
+            }
             Event::Start(Tag::CodeBlock(_)) => out.push_str("\n```\n"),
             Event::End(TagEnd::CodeBlock) => out.push_str("\n```\n"),
             Event::Code(c) => {
@@ -750,6 +764,14 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
     [(ref)]
   }
 }
+// itex the converter could not parse: show the source instead of
+// failing the page
+#let nlab-tex-fallback(src) = box(
+  fill: luma(96%),
+  inset: (x: 3pt, y: 2pt),
+  radius: 2pt,
+  raw(src),
+)
 // framed/painted text patch with real margins: inset-only boxes
 // collapse around equations, so measure and size explicitly
 #let nlab-tbox(strokev, fillv, it) = {
@@ -774,7 +796,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
   }
 }
 #let nlab-anchor(id, body) = context {
-  if query(label(id)).len() > 0 { link(label(id), body) } else { body }
+  if id.len() == 0 or query(label(id)).len() == 0 { body } else { link(label(id), body) }
 }
 "##;
 
@@ -927,7 +949,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
                     stash.put(format!("#nlab-image(\"files/{}\")", n))
                 }
                 Some(n) => stash.put(format!(
-                    "#link(\"https://ncatlab.org/nlab/files/{}\")[(figure)]",
+                    "#link(\"https://ncatlab.org/nlab/files/{}\")[(figure)];",
                     n.replace(' ', "+")
                 )),
                 None => String::new(),
@@ -1092,7 +1114,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
     let ref_re = regex::Regex::new(r"\\ref\{([^}\n]+)\}").unwrap();
     let src = ref_re
         .replace_all(&src, |c: &regex::Captures| {
-            stash.put(format!("#nlab-ref(\"{}\")", sanitize_id(&c[1])))
+            stash.put(format!("#nlab-ref(\"{}\");", sanitize_id(&c[1])))
         })
         .to_string();
     // \cite{Key}: bracketed link to the reference-list anchor when it
@@ -1100,7 +1122,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
     let cite_re = regex::Regex::new(r"\\cite\{([^}\n]+)\}").unwrap();
     let src = cite_re
         .replace_all(&src, |c: &regex::Captures| {
-            stash.put(format!("#nlab-cite(\"{}\")", sanitize_id(&c[1])))
+            stash.put(format!("#nlab-cite(\"{}\");", sanitize_id(&c[1])))
         })
         .to_string();
     // a bare \ref with no target is an author slip; drop the command
@@ -1117,14 +1139,15 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .to_string();
     // Maruku anchor IALs: {#Id} standalone or inline; a repeated id
     // would be a duplicate typst label, so only the first one anchors
-    let anchor_re = regex::Regex::new(r"\{#([A-Za-z0-9:_-]+)\}").unwrap();
+    let anchor_re = regex::Regex::new(r"(^|[^(])\{#([A-Za-z0-9:_-]+)\}").unwrap();
     let mut seen_anchors = std::collections::HashSet::new();
     let src = anchor_re
         .replace_all(&src, |c: &regex::Captures| {
-            if seen_anchors.insert(c[1].to_string()) {
-                stash.put(format!("#metadata(none)#label(\"{}\")", &c[1]))
+            // `[text]({#Id})` is a LINK to the anchor, not the anchor
+            if seen_anchors.insert(c[2].to_string()) {
+                format!("{}{}", &c[1], stash.put(format!("#metadata(none)#label(\"{}\")", &c[2])))
             } else {
-                String::new()
+                c[1].to_string()
             }
         })
         .to_string();

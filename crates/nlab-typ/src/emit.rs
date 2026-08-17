@@ -376,11 +376,37 @@ pub(crate) fn nativize_calls(code: &str) -> String {
                 // restriction bars: mitex spaces `|` like a relation,
                 // but `p|_X` is an ordinary tight atom in LaTeX
                 let res = res.replace("| _(", "#math.class(\"normal\", sym.bar.v)_(");
+                // a cell starting with a bare script has nothing to
+                // attach to; give it a zero-width base
+                let res = regex::Regex::new(r"(^|[,;(])(\s*)([_^])\(")
+                    .unwrap()
+                    .replace_all(&res, "${1}${2}zws ${3}(")
+                    .to_string();
+                // empty accent/function calls choke typst: fill with a
+                // zero-width base
+                let res = res.replace("()", "(zws)");
+                // \atop with a missing side leaves a dangling comma
+                let res = regex::Regex::new(r"atop\(([^()]*), *\)")
+                    .unwrap()
+                    .replace_all(&res, "atop(${1}, zws)")
+                    .to_string();
                 if &c[2] == "mitex" {
                     format!("$ {} $", res) // display/block math
                 } else {
                     format!("${}$", res)
                 }
+            }
+            Err(_) => {
+                // the plugin would fail identically at compile time and
+                // kill the page: degrade to a verbatim formula instead
+                let mut short = tex.trim().replace('\n', " ");
+                if short.len() > 120 {
+                    short.truncate(120);
+                    short.push('\u{2026}');
+                }
+                // match the call context: `mi(..)` sits in code, but
+                // `#mi(..)` / `#mitex(..)` sit in markup
+                format!("{}nlab-tex-fallback({:?})", &c[1], short)
             }
             _ => c[0].to_string(),
         }
