@@ -506,6 +506,7 @@ fn hook_mark(cmd: &str) -> Option<&'static str> {
         "twoheadrightarrow" | "twoheadleftarrow" => "->>",
         "mapsto" | "longmapsto" => "|->",
         "Rightarrow" | "Leftarrow" => "=>",
+        "Downarrow" | "Uparrow" => "=>",
         "seArrow" | "swArrow" | "neArrow" | "nwArrow" => "=>",
         _ => return None,
     })
@@ -764,6 +765,51 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                 }
                 continue;
             }
+            if k == "vv" {
+                // parallel vertical arrows: same endpoints, spread by
+                // horizontal shifts (u-arrows flip both ends and sign)
+                let a0 = nearest_object(grid, r, c, -1, 0)
+                    .or_else(|| nearest_object(grid, r, c, -1, -1))
+                    .or_else(|| nearest_object(grid, r, c, -1, 1));
+                let b0 = nearest_object(grid, r, c, 1, 0)
+                    .or_else(|| nearest_object(grid, r, c, 1, -1))
+                    .or_else(|| nearest_object(grid, r, c, 1, 1));
+                let (a0, b0) = match (a0, b0) {
+                    (Some(a0), Some(b0)) => (a0, b0),
+                    _ => return ("dangling".into(), None),
+                };
+                let ps = parts(cell).unwrap().to_vec();
+                let n = ps.len() as i32;
+                let labeled = ps
+                    .iter()
+                    .any(|p| cget(p, "east").is_some() || cget(p, "west").is_some());
+                let spread = if labeled { 7 } else { 3 };
+                for (i, part) in ps.iter().enumerate() {
+                    let (mut a, mut b) = (a0, b0);
+                    let up = cget(part, "dir") == Some("u");
+                    if up {
+                        std::mem::swap(&mut a, &mut b);
+                    }
+                    let mut pc = part.clone();
+                    // the first arrow's label reads better on the west
+                    // side, away from its right-hand neighbors
+                    if i == 0 && n > 1 {
+                        if let Some(e) = cget(&pc, "east").map(str::to_string) {
+                            if cget(&pc, "west").is_none() {
+                                grid::unset(&mut pc, "east");
+                                grid::set(&mut pc, "west", e);
+                            }
+                        }
+                    }
+                    let mut sh = (2 * i as i32 - (n - 1)) * spread;
+                    if up {
+                        sh = -sh;
+                    }
+                    grid::set(&mut pc, "vshift", sh.to_string());
+                    edges.push((a, b, pc));
+                }
+                continue;
+            }
             if k != "h" && k != "v" && k != "d" {
                 continue;
             }
@@ -936,6 +982,9 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         }
         let mark = edge_mark(&cell);
         let mut args = vec![coord(*a), coord(*b), format!("\"{}\"", mark)];
+        if let Some(sh) = cget(&cell, "vshift") {
+            args.push(format!("shift: {}pt", sh));
+        }
         let mut placement = ["above", "below", "east", "west"]
             .iter()
             .find(|p| cget(&cell, p).is_some())
@@ -943,6 +992,7 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         let ck = kind(&cell).to_string();
         let cdir = cget(&cell, "dir").unwrap().to_string();
         if ck == "v"
+            && cget(&cell, "vshift").is_none()
             && matches!(placement.as_deref(), Some("east") | Some("west"))
             && !(cget(&cell, "east").is_some() && cget(&cell, "west").is_some())
         {

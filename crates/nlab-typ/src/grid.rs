@@ -251,6 +251,34 @@ fn spanning_parens(s: &str) -> bool {
 }
 
 /// Port of trim_label.
+/// Drop spacing macros (\; \, \! \quad \qquad \:) from a cell copy.
+fn regex_lite_strip_spacing(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('\\') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let skip = if after.starts_with("qquad") {
+            Some(5)
+        } else if after.starts_with("quad") {
+            Some(4)
+        } else if after.starts_with([';', ',', '!', ':']) {
+            Some(1)
+        } else {
+            None
+        };
+        match skip {
+            Some(n) => rest = &after[n..],
+            None => {
+                out.push('\\');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn trim_label(frag: &str) -> String {
     let mut frag = remove_laps(frag).trim().to_string();
     loop {
@@ -516,7 +544,10 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
         }
     }
 
-    let bare: String = s.chars().filter(|c| *c != ' ').collect();
+    // spacing macros around a lone arrow ("\;\leftrightarrow\;") are
+    // decoration, not content
+    let despaced = regex_lite_strip_spacing(s);
+    let bare: String = despaced.chars().filter(|c| *c != ' ').collect();
     let tops = top_cmds(s);
 
     // single bare command
@@ -578,6 +609,12 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
         return res;
     }
 
+    // several parallel vertical arrows in one cell:
+    // "\downarrow\downarrow", "\downarrow^{p_2}\downarrow^{p_1}",
+    // "\mathllap{^{f^*}}\uparrow \downarrow\mathrlap{^{f_!}}"
+    if let Some(res) = multi_vertical(s, &tops) {
+        return res;
+    }
     // generic vertical/diagonal with labels
     if let Some(res) = parse_vd_cell(s, &tops) {
         return res;
@@ -622,6 +659,65 @@ fn parse_vd_cell(s: &str, tops: &[String]) -> Option<Cell> {
     if !east.is_empty() {
         set(&mut res, "east", east);
     }
+    Some(res)
+}
+
+/// Two or three parallel vertical arrows sharing a cell (double
+/// groupoid source/target maps, adjunction pairs \uparrow\downarrow).
+fn multi_vertical(s: &str, tops: &[String]) -> Option<Cell> {
+    let n_v = tops.iter().filter(|c| v_dir(c).is_some()).count();
+    if !(2..=3).contains(&n_v) {
+        return None;
+    }
+    if tops.iter().any(|c| v_dir(c).is_none() && is_arrow(c)) {
+        return None;
+    }
+    let names = ["downarrow", "Downarrow", "uparrow", "Uparrow"];
+    let mut found: Vec<(usize, &str)> = Vec::new();
+    let mut idx = 0usize;
+    while let Some(i) = s[idx..].find('\\') {
+        let at = idx + i;
+        let after = &s[at + 1..];
+        if let Some(n) = names.iter().find(|n| {
+            after.starts_with(**n)
+                && !after[n.len()..].starts_with(|c: char| c.is_ascii_alphabetic())
+        }) {
+            found.push((at, n));
+            idx = at + 1 + n.len();
+        } else {
+            idx = at + 1;
+        }
+    }
+    if found.len() != n_v {
+        return None;
+    }
+    let mut parts_v: Vec<Cell> = Vec::new();
+    for (i, (pos, name)) in found.iter().enumerate() {
+        let seg_end = found
+            .get(i + 1)
+            .map(|(p, _)| *p)
+            .unwrap_or(s.len());
+        // \cdot as an arrow label is a "no label" placeholder
+        let unlab = |l: String| if l == "\\cdot" { String::new() } else { l };
+        let east = unlab(trim_label(&s[pos + 1 + name.len()..seg_end]));
+        let west = if i == 0 {
+            unlab(trim_label(&s[..*pos]))
+        } else {
+            String::new()
+        };
+        let mut part = cell("v");
+        set(&mut part, "dir", v_dir(name).unwrap().to_string());
+        set(&mut part, "cmd", name.to_string());
+        if !west.is_empty() {
+            set(&mut part, "west", west);
+        }
+        if !east.is_empty() {
+            set(&mut part, "east", east);
+        }
+        parts_v.push(part);
+    }
+    let mut res = cell("vv");
+    res.push(("parts", Val::Parts(parts_v)));
     Some(res)
 }
 
