@@ -1398,10 +1398,13 @@ terminology|notn|notation|conjecture|assumption|exercise";
     // markdown link URLs containing spaces or unbalanced parens make
     // CommonMark drop the whole link: percent-encode the offenders
     let src = fix_md_link_urls(&src);
-    // "**bold **" (trailing space) is not CommonMark strong
-    let src = regex::Regex::new(r"\*\*(\S[^*\n]*?) +\*\*")
+    // "**bold **" (trailing space) is not CommonMark strong. The
+    // opening ** must actually be an opener (start of line or after
+    // whitespace/bracket), else this would pair a CLOSING ** with the
+    // next opener ("**a**, or **b**" -> "**a**, or** b**")
+    let src = regex::Regex::new(r"(?m)(^|[\s(\[{])\*\*(\S[^*\n]*?) +\*\*")
         .unwrap()
-        .replace_all(&src, "**$1** ")
+        .replace_all(&src, "$1**$2** ")
         .to_string();
     let src = extract_wiki(&src, &mut stash);
     // \ref{Id}: Maruku turns these into numbered links to environment
