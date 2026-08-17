@@ -76,8 +76,10 @@ SINGULAR_RULES = [("sses", "ss"), ("ies", "y"), ("ices", "ex"),
 def norm_key(name: str) -> str:
     """Case-, dash-, whitespace-, and infinity-symbol-insensitive form."""
     key = name.replace("∞", "infinity")
+    key = re.sub(r"\\infty\b", "infinity", key)  # TeX spelling
     key = key.replace("/'", "'").replace("\\'", "'")  # escaped-quote residue
     key = DASH_RUN_RE.sub("-", key)
+    key = re.sub(r"\s*,\s*", ",", key)  # '(infinity, 1)' == '(infinity,1)'
     return re.sub(r"\s+", " ", key).strip().lower().lstrip("+*# ")
 
 
