@@ -547,6 +547,19 @@ fn markdown_to_typst(src: &str) -> String {
                     out.push('\n');
                 }
             }
+            Event::Start(Tag::Table(ref aligns)) => {
+                out.push_str(&format!(
+                    "\n#table(columns: {}, stroke: 0.5pt + luma(50%), inset: 5pt,\n",
+                    aligns.len()
+                ));
+            }
+            Event::End(TagEnd::Table) => out.push_str(")\n\n"),
+            Event::Start(Tag::TableHead) => out.push_str("table.header("),
+            Event::End(TagEnd::TableHead) => out.push_str("),\n"),
+            Event::Start(Tag::TableRow) => {}
+            Event::End(TagEnd::TableRow) => out.push('\n'),
+            Event::Start(Tag::TableCell) => out.push('['),
+            Event::End(TagEnd::TableCell) => out.push_str("],"),
             Event::Start(Tag::Paragraph) => {
                 // paragraphs inside a list item stay in the item
                 if item_depth == 0 {
@@ -1162,6 +1175,53 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "$1 $2")
         .to_string();
+    // a non-breaking space after ATX hashes is not a heading to cmark
+    let src = regex::Regex::new(r"(?m)^(#+)\u{A0}+")
+        .unwrap()
+        .replace_all(&src, "$1 ")
+        .to_string();
+    // Maruku attribute-definition lines `{:name: attrs}`; expand their
+    // references `{: name}` in fences to the stored attributes
+    let mut ial_defs: Vec<(String, String)> = Vec::new();
+    let src = regex::Regex::new(r"(?m)^\{:(\w+):([^}\n]*)\}\s*$")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            ial_defs.push((c[1].to_string(), c[2].trim().to_string()));
+            String::new()
+        })
+        .to_string();
+    let mut src = src;
+    for (name, attrs) in &ial_defs {
+        src = regex::Regex::new(&format!(r"\{{:\s*{}\s*\}}", regex::escape(name)))
+            .unwrap()
+            .replace_all(&src, format!("{{: {}}}", attrs).as_str())
+            .to_string();
+    }
+    // anchor ids containing spaces, in definition and reference position
+    let src = regex::Regex::new(r"\{#([\w:-]+(?: [\w:-]+)+)\}")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            format!("{{#{}}}", c[1].replace(' ', "-"))
+        })
+        .to_string();
+    let src = regex::Regex::new(r"\]\(#([\w:-]+(?: [\w:-]+)+)\)")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            format!("](#{})", c[1].replace(' ', "-"))
+        })
+        .to_string();
+    // authors occasionally write LaTeX sectioning instead of markdown
+    let src = regex::Regex::new(
+        r"(?m)^\\(sub)?(sub)?section\*?\{([^}\n]*)\}[ \t]*$",
+    )
+    .unwrap()
+    .replace_all(&src, |c: &regex::Captures| {
+        let depth = 2
+            + c.get(1).map_or(0, |_| 1)
+            + c.get(2).map_or(0, |_| 1);
+        format!("{} {}", "#".repeat(depth), &c[3])
+    })
+    .to_string();
     // Maruku tolerates a space between link text and destination
     // (`[text] (http://..)`); cmark does not
     let src = regex::Regex::new(r"\]\s+\((https?://[^()\s]+|#[^()\s]+)\)")

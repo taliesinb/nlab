@@ -649,9 +649,15 @@ fn double_diagonal(s: &str) -> Option<Cell> {
     let (i1, c1) = found[0];
     let (i2, c2) = found[1];
     let between = &s[i1 + 1 + c1.len()..i2];
-    if !between.trim().is_empty() {
-        return None;
-    }
+    // `f \searrow \cong \swarrow g`: a relation riding between the two
+    // arrows is the triangle's 2-cell
+    let mid = between.trim();
+    let mid = match mid {
+        "" => None,
+        "\\cong" | "\\simeq" | "=" | "\\approx" | "\\Downarrow"
+        | "\\Uparrow" => Some(mid.to_string()),
+        _ => return None,
+    };
     let pre = trim_label(&s[..i1]);
     let post = trim_label(&s[i2 + 1 + c2.len()..]);
     for lab in [&pre, &post] {
@@ -672,6 +678,9 @@ fn double_diagonal(s: &str) -> Option<Cell> {
     }
     let mut res = cell("dd");
     res.push(("parts", Val::Parts(parts)));
+    if let Some(m) = mid {
+        set(&mut res, "mid", m);
+    }
     Some(res)
 }
 

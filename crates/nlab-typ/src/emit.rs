@@ -745,7 +745,7 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
 
     // Resolve every arrow to its endpoint objects first.
     let mut edges: Vec<(RC, RC, Cell)> = Vec::new();
-    let mut floats: Vec<(usize, usize, Cell)> = Vec::new();
+    let mut floats: Vec<(usize, usize, String)> = Vec::new();
     for (r, row) in grid.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let k = kind(cell).to_string();
@@ -756,6 +756,11 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                         (Some(a), Some(b)) => edges.push((a, b, part.clone())),
                         _ => return ("dangling".into(), None),
                     }
+                }
+                // a relation between the two arrows (f ↘ ≅ ↙ g) floats
+                // at the cell position
+                if let Some(mid) = cget(cell, "mid") {
+                    floats.push((r, c, mid.to_string()));
                 }
                 continue;
             }
@@ -781,7 +786,19 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     && (nearest_object(grid, r, c, -1, 0).is_none()
                         || nearest_object(grid, r, c, 1, 0).is_none())
                 {
-                    floats.push((r, c, cell.clone()));
+                    let base = if cget(cell, "cmd") == Some("Uparrow") {
+                        "\\Uparrow"
+                    } else {
+                        "\\Downarrow"
+                    };
+                    let tex = if let Some(e) = cget(cell, "east") {
+                        format!("{}^{{{}}}", base, e)
+                    } else if let Some(w) = cget(cell, "west") {
+                        format!("{{}}^{{{}}}{}", w, base)
+                    } else {
+                        base.to_string()
+                    };
+                    floats.push((r, c, tex));
                     continue;
                 }
                 a = nearest_object(grid, r, c, -1, 0)
@@ -866,11 +883,13 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
     }
 
     // floating 2-cells sit at the centroid of their corner objects
-    for (r, c, cell) in &floats {
-        let corners: Vec<RC> = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-            .iter()
-            .filter_map(|&(dr, dc)| nearest_object(grid, *r, *c, dr, dc))
-            .collect();
+    for (r, c, tex) in &floats {
+        let mut corners: Vec<RC> =
+            [(-1, -1), (-1, 1), (1, -1), (1, 1), (-1, 0), (1, 0)]
+                .iter()
+                .filter_map(|&(dr, dc)| nearest_object(grid, *r, *c, dr, dc))
+                .collect();
+        corners.dedup();
         if corners.is_empty() {
             continue;
         }
@@ -878,23 +897,11 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
             / corners.len() as f64;
         let y = corners.iter().map(|rc| rmap(rc.0) as f64).sum::<f64>()
             / corners.len() as f64;
-        let base = if cget(cell, "cmd") == Some("Uparrow") {
-            "\\Uparrow"
-        } else {
-            "\\Downarrow"
-        };
-        let tex = if let Some(e) = cget(cell, "east") {
-            format!("{}^{{{}}}", base, e)
-        } else if let Some(w) = cget(cell, "west") {
-            format!("{{}}^{{{}}}{}", w, base)
-        } else {
-            base.to_string()
-        };
         lines.push(format!(
             "  node(({:.2}, {:.2}), mi({})),",
             x,
             y,
-            ts(&tex)
+            ts(tex)
         ));
     }
 
