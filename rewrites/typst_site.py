@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Emit the generated .typ pages as a browsable typst site.
+
+Copies build/typ-pages/<id>.typ to dist/typst/<slug>.typ, where <slug>
+is the page's canonical name lowercased and hyphenated. Duplicate slugs
+get -<id> appended. Image references resolve through a per-file symlink
+tree (with extensions corrected to match magic bytes, since typst picks
+its decoder by extension), and _index.typ lists every page.
+
+Usage: typst_site.py [--out DIR]
+"""
+
+import argparse
+import pathlib
+import re
+import unicodedata
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SRC = ROOT / "build/typ-pages"
+FILES_ROOT = ROOT / "build/nlab-files"
+
+
+def slugify(name: str) -> str:
+    s = unicodedata.normalize("NFKC", name).lower()
+    s = re.sub(r"['’\"]", "", s)
+    s = re.sub(r"[^\w]+", "-", s, flags=re.UNICODE)
+    s = s.strip("-")
+    return s or "page"
+
+
+def load_names() -> dict[str, str]:
+    """Canonical page names (page-index.tsv also lists redirect
+    aliases, which must not steal a page's slug)."""
+    names = {}
+    for f in (ROOT / "build/nlab-content/pages").glob("*/*/*/*/*/name"):
+        names[f.parent.name] = f.read_text(encoding="utf-8").strip()
+    return names
+
+
+def markup_escape(t: str) -> str:
+    return re.sub(r"([\\#$\[\]*_`<>@])", r"\\\1", t)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=str(ROOT / "dist/typst"))
+    args = ap.parse_args()
+    out = pathlib.Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    names = load_names()
+    files_dir = out / "files"
+    if files_dir.is_symlink():
+        files_dir.unlink()
+    files_dir.mkdir(exist_ok=True)
+    fixed: dict[str, str] = {}
+
+    def resolve_image(name: str) -> str:
+        """Uploads sometimes carry the wrong extension (PNG bytes in a
+        .jpg); link under an extension matching the magic bytes."""
+        if name in fixed:
+            return fixed[name]
+        src = FILES_ROOT / name
+        target = name
+        try:
+            magic = src.open("rb").read(12)
+            actual = None
+            if magic.startswith(b"\x89PNG"):
+                actual = "png"
+            elif magic.startswith(b"\xff\xd8"):
+                actual = "jpg"
+            elif magic[:6] in (b"GIF87a", b"GIF89a"):
+                actual = "gif"
+            elif magic[:4] == b"RIFF" and magic[8:12] == b"WEBP":
+                actual = "webp"
+            ext = name.rsplit(".", 1)[-1].lower()
+            norm = {"jpeg": "jpg"}.get(ext, ext)
+            if actual and norm != actual:
+                target = f"{name}.{actual}"
+        except OSError:
+            pass
+        link = files_dir / target
+        if not (link.exists() or link.is_symlink()):
+            link.symlink_to(src)
+        fixed[name] = target
+        return target
+
+    img_re = re.compile(r'nlab-image\("files/([^"]+)"')
+    taken: dict[str, str] = {}
+    rows = []
+    for typ in sorted(SRC.glob("*.typ"), key=lambda p: int(p.stem)):
+        pid = typ.stem
+        name = names.get(pid, pid)
+        slug = slugify(name)
+        if slug in taken:
+            slug = f"{slug}-{pid}"
+        taken[slug] = pid
+        text = typ.read_text(errors="replace")
+        text = img_re.sub(
+            lambda m: f'nlab-image("files/{resolve_image(m.group(1))}"',
+            text,
+        )
+        (out / f"{slug}.typ").write_text(text)
+        rows.append((name, slug, pid))
+
+    index = ["#set page(margin: 2cm)", "= nLab typst pages", ""]
+    for name, slug, pid in sorted(rows, key=lambda r: r[0].lower()):
+        index.append(
+            f'#link("{slug}.typ")[{markup_escape(name)}]'
+            f' #h(1fr) #text(gray, "{pid}") \\'
+        )
+    (out / "_index.typ").write_text("\n".join(index) + "\n")
+    print(f"{len(rows)} pages -> {out}")
+
+
+if __name__ == "__main__":
+    main()
