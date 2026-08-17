@@ -433,7 +433,13 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
     if s0.is_empty() {
         return cell("e");
     }
-    let s_owned = remove_bigs(s0);
+    // fix_tex substitutes the itex 2-cell arrows with glyphs before we
+    // run; map them back so they classify as diagonal arrows
+    let s_owned = remove_bigs(s0)
+        .replace('⇙', "\\swArrow ")
+        .replace('⇘', "\\seArrow ")
+        .replace('⇗', "\\neArrow ")
+        .replace('⇖', "\\nwArrow ");
     let s = s_owned.as_str();
 
     // \xrightarrow[below]{above}
@@ -513,11 +519,15 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
                     // adjoint pair: \underoverset{\underset{R}{<-}}
                     // {\overset{L}{->}}{} (base empty or \bot/\dashv)
                     let base = arrow.trim();
-                    if matches!(
-                        base,
-                        "" | "\\bot" | "\\perp" | "\\dashv" | "\\vdash"
-                            | "\\simeq" | "\\cong"
-                    ) {
+                    let base_ok = base.is_empty()
+                        || ["\\bot", "\\perp", "\\dashv", "\\vdash", "\\simeq", "\\cong"]
+                            .iter()
+                            .any(|p| {
+                                base == *p
+                                    || (base.starts_with(*p)
+                                        && base[p.len()..].starts_with(['_', '^']))
+                            });
+                    if base_ok {
                         let top = classify_cell(&label);
                         let bottom =
                             classify_cell(label2.as_deref().unwrap_or(""));
@@ -530,6 +540,9 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
                             let dir = get(&top, "dir").unwrap().to_string();
                             set(&mut res, "dir", dir);
                             res.push(("pair", Val::Parts(vec![top, bottom])));
+                            if !base.is_empty() {
+                                set(&mut res, "mid", base.to_string());
+                            }
                             return res;
                         }
                     }
@@ -717,6 +730,7 @@ fn multi_vertical(s: &str, tops: &[String]) -> Option<Cell> {
         return None;
     }
     let mut parts_v: Vec<Cell> = Vec::new();
+    let mut mid: Option<String> = None;
     for (i, (pos, name)) in found.iter().enumerate() {
         let seg_end = found
             .get(i + 1)
@@ -724,7 +738,14 @@ fn multi_vertical(s: &str, tops: &[String]) -> Option<Cell> {
             .unwrap_or(s.len());
         // \cdot as an arrow label is a "no label" placeholder
         let unlab = |l: String| if l == "\\cdot" { String::new() } else { l };
-        let east = unlab(trim_label(&s[pos + 1 + name.len()..seg_end]));
+        let mut east = unlab(trim_label(&s[pos + 1 + name.len()..seg_end]));
+        // an adjunction symbol between two arrows floats between them
+        if i + 1 < found.len()
+            && matches!(east.as_str(), "\\dashv" | "\\vdash" | "\\bot" | "\\perp")
+        {
+            mid = Some(east.clone());
+            east = String::new();
+        }
         let west = if i == 0 {
             unlab(trim_label(&s[..*pos]))
         } else {
@@ -743,6 +764,9 @@ fn multi_vertical(s: &str, tops: &[String]) -> Option<Cell> {
     }
     let mut res = cell("vv");
     res.push(("parts", Val::Parts(parts_v)));
+    if let Some(m) = mid {
+        set(&mut res, "mid", m);
+    }
     Some(res)
 }
 

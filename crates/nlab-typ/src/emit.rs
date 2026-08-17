@@ -747,6 +747,8 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
     // Resolve every arrow to its endpoint objects first.
     let mut edges: Vec<(RC, RC, Cell)> = Vec::new();
     let mut floats: Vec<(usize, usize, String)> = Vec::new();
+    // (top object, bottom object, arrow cell, horizontal offset in pt)
+    let mut vvlines: Vec<(RC, RC, Cell, f64)> = Vec::new();
     for (r, row) in grid.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let k = kind(cell).to_string();
@@ -798,6 +800,9 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     (Some(a0), Some(b0)) => (a0, b0),
                     _ => return ("dangling".into(), None),
                 };
+                if let Some(mid) = cget(cell, "mid") {
+                    floats.push((r, c, mid.to_string()));
+                }
                 let ps = parts(cell).unwrap().to_vec();
                 let n = ps.len();
                 let mut pcs: Vec<Cell> = Vec::new();
@@ -815,24 +820,41 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     }
                     pcs.push(pc);
                 }
-                // spread wider only when a label sits BETWEEN arrows
-                let inner = pcs.iter().enumerate().any(|(i, p)| {
-                    (i + 1 < n && cget(p, "east").is_some())
-                        || (i > 0 && cget(p, "west").is_some())
-                });
-                let spread = if inner { 7 } else { 3 };
-                for (i, mut pc) in pcs.into_iter().enumerate() {
-                    let (mut a, mut b) = (a0, b0);
-                    let up = cget(&pc, "dir") == Some("u");
-                    if up {
-                        std::mem::swap(&mut a, &mut b);
+                // spread wider only when something sits BETWEEN arrows
+                let inner = cget(cell, "mid").is_some()
+                    || pcs.iter().enumerate().any(|(i, p)| {
+                        (i + 1 < n && cget(p, "east").is_some())
+                            || (i > 0 && cget(p, "west").is_some())
+                    });
+                let gap = if cget(cell, "mid").is_some() {
+                    14.0
+                } else if inner {
+                    9.0
+                } else {
+                    6.0
+                };
+                if a0.1 == b0.1 {
+                    // same column: explicit coordinate lines, so narrow
+                    // nodes cannot un-clip a shifted edge
+                    for (i, pc) in pcs.into_iter().enumerate() {
+                        let off = (i as f64 - (n as f64 - 1.0) / 2.0) * gap;
+                        vvlines.push((a0, b0, pc, off));
                     }
-                    let mut sh = (2 * i as i32 - (n as i32 - 1)) * spread;
-                    if up {
-                        sh = -sh;
+                } else {
+                    for (i, mut pc) in pcs.into_iter().enumerate() {
+                        let (mut a, mut b) = (a0, b0);
+                        let up = cget(&pc, "dir") == Some("u");
+                        if up {
+                            std::mem::swap(&mut a, &mut b);
+                        }
+                        let mut sh =
+                            ((i as f64 - (n as f64 - 1.0) / 2.0) * gap) as i32;
+                        if up {
+                            sh = -sh;
+                        }
+                        grid::set(&mut pc, "vshift", sh.to_string());
+                        edges.push((a, b, pc));
                     }
-                    grid::set(&mut pc, "vshift", sh.to_string());
-                    edges.push((a, b, pc));
                 }
                 continue;
             }
@@ -899,7 +921,7 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         }
     }
 
-    if edges.is_empty() {
+    if edges.is_empty() && vvlines.is_empty() {
         return ("ok".into(), Some(emit_table(grid)));
     }
 
@@ -954,21 +976,26 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         lines.push(format!("  node({}, mi({})),", coord(*rc), label));
     }
 
-    // floating 2-cells sit at the centroid of their corner objects
-    for (r, c, tex) in &floats {
-        let mut corners: Vec<RC> =
-            [(-1, -1), (-1, 1), (1, -1), (1, 1), (-1, 0), (1, 0)]
-                .iter()
-                .filter_map(|&(dr, dc)| nearest_object(grid, *r, *c, dr, dc))
-                .collect();
-        corners.dedup();
-        if corners.is_empty() {
-            continue;
+    // floating 2-cells sit at their own grid position, interpolated
+    // between the occupied rows/columns
+    let interp = |sorted: &[usize], v: usize| -> f64 {
+        if let Some(i) = sorted.iter().position(|x| *x == v) {
+            return i as f64;
         }
-        let x = corners.iter().map(|rc| cmap(rc.1) as f64).sum::<f64>()
-            / corners.len() as f64;
-        let y = corners.iter().map(|rc| rmap(rc.0) as f64).sum::<f64>()
-            / corners.len() as f64;
+        let i = sorted.iter().filter(|x| **x < v).count();
+        if i == 0 {
+            0.0
+        } else if i == sorted.len() {
+            (sorted.len() - 1) as f64
+        } else {
+            let lo = sorted[i - 1] as f64;
+            let hi = sorted[i] as f64;
+            (i - 1) as f64 + (v as f64 - lo) / (hi - lo)
+        }
+    };
+    for (r, c, tex) in &floats {
+        let x = interp(&cs, *c);
+        let y = interp(&rs, *r);
         lines.push(format!(
             "  node(({:.2}, {:.2}), mi({})),",
             x,
@@ -977,12 +1004,54 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         ));
     }
 
+    // parallel vertical arrows as explicit coordinate lines
+    for (a0, b0, pc, off) in &vvlines {
+        let x = cmap(a0.1) as f64 + off / 28.0;
+        let ytop = rmap(a0.0) as f64 + 0.30;
+        let ybot = rmap(b0.0) as f64 - 0.30;
+        let up = cget(pc, "dir") == Some("u");
+        let (y1, y2) = if up { (ybot, ytop) } else { (ytop, ybot) };
+        let mark = edge_mark(pc);
+        let mut args = vec![
+            format!("({:.3}, {:.2})", x, y1),
+            format!("({:.3}, {:.2})", x, y2),
+            format!("\"{}\"", mark),
+        ];
+        for (key, side) in [("west", "left"), ("east", "right")] {
+            if let Some(l) = cget(pc, key) {
+                // label-side is relative to travel: heading DOWN, the
+                // travel-left is screen-east — flip for down edges
+                let side = if up {
+                    side
+                } else if side == "left" {
+                    "right"
+                } else {
+                    "left"
+                };
+                args.push(format!("label: text(0.75em, mi({}))", ts(l)));
+                args.push(format!("label-side: {}", side));
+                args.push("label-sep: 0.1em".to_string());
+                break;
+            }
+        }
+        lines.push(format!("  edge({}),", args.join(", ")));
+    }
+
     let max_x = cs.len() - 1;
     for (a, b, cell) in edges.iter() {
         let mut cell = cell.clone();
         if parts(&cell).is_some() {
             let dir = cget(&cell, "dir").unwrap().to_string();
             let (left, right) = if dir == "l" { (*b, *a) } else { (*a, *b) };
+            // a relation base between the pair (\simeq_Q) floats midway
+            if let Some(mid) = cget(&cell, "mid") {
+                lines.push(format!(
+                    "  node(({:.2}, {:.2}), mi({})),",
+                    (cmap(a.1) as f64 + cmap(b.1) as f64) / 2.0,
+                    rmap(a.0) as f64,
+                    ts(mid)
+                ));
+            }
             for (i, sub) in parts(&cell).unwrap().iter().enumerate() {
                 let sdir = cget(sub, "dir").unwrap();
                 let (aa, bb) = if matches!(sdir, "r" | "lr" | "~") {
