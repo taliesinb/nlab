@@ -1168,6 +1168,22 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "]($1)")
         .to_string();
+    // `&lt;url>` — an angle autolink whose < was entity-escaped
+    let src = regex::Regex::new(r"&lt;(https?://[^\s>&]+)>")
+        .unwrap()
+        .replace_all(&src, "<$1>")
+        .to_string();
+    // `[text] [url]` — square-bracket destination
+    let src = regex::Regex::new(r"\]\s*\[(https?://[^\s\]]+)\]")
+        .unwrap()
+        .replace_all(&src, "]($1)")
+        .to_string();
+    // inline inkscape/svg-edit drawings: cmark's inline-HTML handling
+    // leaks their metadata as text; drop them wholesale
+    let src = regex::Regex::new(r"(?s)<svg\b.*?</svg>")
+        .unwrap()
+        .replace_all(&src, "")
+        .to_string();
     // an author who swapped text and destination ([url](description))
     let src = regex::Regex::new(r"\[(https?://[^\s\]]+)\]\(([^()]*[ ][^()]*)\)")
         .unwrap()
