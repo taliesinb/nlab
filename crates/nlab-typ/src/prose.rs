@@ -113,7 +113,18 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
 }
 
 fn math_to_typst(tex: &str, display: bool) -> String {
-    let tex = &emit::fix_itex_builtins(tex);
+    // numeric character references inside math ($C &#8696; D$)
+    let tex = regex::Regex::new(r"&#(\d+);")
+        .unwrap()
+        .replace_all(tex, |c: &regex::Captures| {
+            c[1].parse::<u32>()
+                .ok()
+                .and_then(char::from_u32)
+                .map(String::from)
+                .unwrap_or_else(|| c[0].to_string())
+        })
+        .to_string();
+    let tex = &emit::fix_itex_builtins(&tex);
     if display {
         if let Some(body) = emit::emit_formula_body(tex) {
             return format!("#nlab-diagram[\n{}]", body.trim_end());

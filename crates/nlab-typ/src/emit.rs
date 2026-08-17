@@ -742,6 +742,7 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
 
     // Resolve every arrow to its endpoint objects first.
     let mut edges: Vec<(RC, RC, Cell)> = Vec::new();
+    let mut floats: Vec<(usize, usize, Cell)> = Vec::new();
     for (r, row) in grid.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let k = kind(cell).to_string();
@@ -771,6 +772,15 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     b = nearest_object(grid, r, c, 1, 0);
                 }
             } else if k == "v" {
+                // a double arrow with no object directly above/below is
+                // a 2-cell floating in a square's interior, not an edge
+                if matches!(cget(cell, "cmd"), Some("Downarrow") | Some("Uparrow"))
+                    && (nearest_object(grid, r, c, -1, 0).is_none()
+                        || nearest_object(grid, r, c, 1, 0).is_none())
+                {
+                    floats.push((r, c, cell.clone()));
+                    continue;
+                }
                 a = nearest_object(grid, r, c, -1, 0)
                     .or_else(|| nearest_object(grid, r, c, -1, -1))
                     .or_else(|| nearest_object(grid, r, c, -1, 1));
@@ -850,6 +860,39 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
     for rc in &sorted_objs {
         let label = ts(&format!("\\displaystyle {}", obj_tex[rc]));
         lines.push(format!("  node({}, mi({})),", coord(*rc), label));
+    }
+
+    // floating 2-cells sit at the centroid of their corner objects
+    for (r, c, cell) in &floats {
+        let corners: Vec<RC> = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+            .iter()
+            .filter_map(|&(dr, dc)| nearest_object(grid, *r, *c, dr, dc))
+            .collect();
+        if corners.is_empty() {
+            continue;
+        }
+        let x = corners.iter().map(|rc| cmap(rc.1) as f64).sum::<f64>()
+            / corners.len() as f64;
+        let y = corners.iter().map(|rc| rmap(rc.0) as f64).sum::<f64>()
+            / corners.len() as f64;
+        let base = if cget(cell, "cmd") == Some("Uparrow") {
+            "\\Uparrow"
+        } else {
+            "\\Downarrow"
+        };
+        let tex = if let Some(e) = cget(cell, "east") {
+            format!("{}^{{{}}}", base, e)
+        } else if let Some(w) = cget(cell, "west") {
+            format!("{{}}^{{{}}}{}", w, base)
+        } else {
+            base.to_string()
+        };
+        lines.push(format!(
+            "  node(({:.2}, {:.2}), mi({})),",
+            x,
+            y,
+            ts(&tex)
+        ));
     }
 
     let max_x = cs.len() - 1;
@@ -1025,7 +1068,7 @@ static SPACING_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*$").unwrap());
 static SEP_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"^(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*(=|\\simeq|\\cong)?(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*$",
+        r"^(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*(=|\\simeq|\\cong|\\text\{[^{}]{1,24}\})?(\\qquad|\\quad|\\;|\\,|\\!|[\s.,])*$",
     )
     .unwrap()
 });
@@ -1066,9 +1109,31 @@ pub(crate) fn emit_formula(tex: &str) -> (String, String, Option<String>) {
     }
 }
 
+/// `\begin{matrix}` abused as a commutative diagram (vertical arrows in
+/// cells) becomes `\array{..}` so the fletcher pipeline picks it up; a
+/// grid the parser rejects is converted back by emit_equation.
+fn matrix_diagrams_to_arrays(tex: &str) -> String {
+    static MATRIX_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?s)\\begin\{matrix\}(.*?)\\end\{matrix\}").unwrap()
+    });
+    static VARROW_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"\\(d|D|u|U)(own|p)arrow|\\[sn][ew]arrow").unwrap()
+    });
+    MATRIX_RE
+        .replace_all(tex, |c: &regex::Captures| {
+            if VARROW_RE.is_match(&c[1]) {
+                format!("\\array{{{}}}", &c[1])
+            } else {
+                c[0].to_string()
+            }
+        })
+        .to_string()
+}
+
 /// The typst body (no preamble) for a display formula, when the diagram
 /// pipeline can handle it; None means "render as plain math".
 pub(crate) fn emit_formula_body(tex: &str) -> Option<String> {
+    let tex = &matrix_diagrams_to_arrays(tex);
     match grid::parse_formula_grid(tex) {
         Ok(g) => emit(&g).1,
         Err(status) if status == "wrapped" || status == "no-array" => wrapped_path(tex).2,
