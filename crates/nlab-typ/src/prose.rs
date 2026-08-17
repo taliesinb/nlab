@@ -1162,6 +1162,44 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "$1 $2")
         .to_string();
+    // Maruku tolerates a space between link text and destination
+    // (`[text] (http://..)`); cmark does not
+    let src = regex::Regex::new(r"\]\s+\((https?://[^()\s]+|#[^()\s]+)\)")
+        .unwrap()
+        .replace_all(&src, "]($1)")
+        .to_string();
+    // an author who swapped text and destination ([url](description))
+    let src = regex::Regex::new(r"\[(https?://[^\s\]]+)\]\(([^()]*[ ][^()]*)\)")
+        .unwrap()
+        .replace_all(&src, "[$2]($1)")
+        .to_string();
+    // Instiki autolinks bare URLs; cmark needs <..>. Preceding context
+    // must not be a markdown destination `](`, an attribute `="`, or
+    // an already-wrapped `<`
+    let src = regex::Regex::new(r#"(^|[\s:]|[^\]<\[]\()(https?://[^\s<>"']+)"#)
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            let mut url = &c[2];
+            // trailing punctuation belongs to the prose, and a closing
+            // paren only to the URL if it has a matching opener inside
+            loop {
+                let t = url.trim_end_matches(['.', ',', ';', '!', '?']);
+                let t = if t.ends_with(')')
+                    && t.matches('(').count() < t.matches(')').count()
+                {
+                    &t[..t.len() - 1]
+                } else {
+                    t
+                };
+                if t.len() == url.len() {
+                    break;
+                }
+                url = t;
+            }
+            let tail = &c[2][url.len()..];
+            format!("{}<{}>{}", &c[1], url, tail)
+        })
+        .to_string();
     // inline <a> tags become markdown links BEFORE math extraction:
     // anchors inside \text{} would otherwise reach typst raw and
     // parse as unclosed <labels>
