@@ -1181,6 +1181,14 @@ terminology|notn|notation|conjecture|assumption|exercise";
         src = format!("{}\n{}", src, stash.put("]".into()));
     }
     let src = src.replace("\\linebreak", " ");
+    // a "# Contents" heading right before the toc directive would
+    // double #outline()'s own title (and appear inside the outline)
+    let src = regex::Regex::new(
+        r"(?mi)^#+\s*Contents?\s*#*\s*\n+(\*[^\n{]*\n?\{:\s*toc)",
+    )
+    .unwrap()
+    .replace_all(&src, "$1")
+    .to_string();
     // maruku table-of-contents list item ("* table of contents\n{:toc}",
     // "* automatic toc {: toc}", ...)
     let src = regex::Regex::new(r"(?m)^\*[^\n{]*\n?\{:\s*toc[^}]*\}\s*$")
