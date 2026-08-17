@@ -15,33 +15,37 @@ use std::collections::HashMap;
 /// Affine transform + inherited style for a scope.
 #[derive(Clone)]
 struct Frame {
-    sx: f64,
-    sy: f64,
+    // full linear part: rotations compose with scales and reflections
+    m: [f64; 4], // row-major [a b; c d]
     tx: f64,
     ty: f64,
-    rot: f64, // radians, applied to coordinates before scaling
     color: String,
     width: f64,
 }
 
 impl Frame {
     fn apply(&self, p: (f64, f64)) -> (f64, f64) {
-        let (x, y) = if self.rot != 0.0 {
-            let (s, c) = self.rot.sin_cos();
-            (c * p.0 - s * p.1, s * p.0 + c * p.1)
-        } else {
-            p
-        };
-        (self.tx + self.sx * x, self.ty + self.sy * y)
+        (
+            self.tx + self.m[0] * p.0 + self.m[1] * p.1,
+            self.ty + self.m[2] * p.0 + self.m[3] * p.1,
+        )
     }
-    /// Child frame: parent ∘ translate(shift) ∘ rotate ∘ scale(s).
-    fn child(&self, shift: (f64, f64), scale: (f64, f64)) -> Frame {
+    /// Child frame: parent ∘ translate(shift) ∘ rotate(deg) ∘ scale.
+    fn child(&self, shift: (f64, f64), scale: (f64, f64), rot_deg: f64) -> Frame {
+        let (sn, cs) = rot_deg.to_radians().sin_cos();
+        // R(rot) · diag(scale)
+        let l = [cs * scale.0, -sn * scale.1, sn * scale.0, cs * scale.1];
+        let m = [
+            self.m[0] * l[0] + self.m[1] * l[2],
+            self.m[0] * l[1] + self.m[1] * l[3],
+            self.m[2] * l[0] + self.m[3] * l[2],
+            self.m[2] * l[1] + self.m[3] * l[3],
+        ];
+        let (tx, ty) = self.apply(shift);
         Frame {
-            tx: self.tx + self.sx * shift.0,
-            ty: self.ty + self.sy * shift.1,
-            sx: self.sx * scale.0,
-            sy: self.sy * scale.1,
-            rot: self.rot,
+            m,
+            tx,
+            ty,
             color: self.color.clone(),
             width: self.width,
         }
@@ -242,26 +246,101 @@ fn eval_coord(
     acc
 }
 
-/// Evaluate `45+240`-style +/- chains (tikz polar angles use them).
+/// Arithmetic coordinate expressions: + - * / with parens (and tikz's
+/// braces, which behave like parens): `{(2+.25-.05)*360/5}`.
 fn eval_num(s: &str) -> Option<f64> {
-    let s = s.trim().trim_start_matches('(').trim_end_matches(')');
-    let mut total = 0.0f64;
-    let mut cur = String::new();
-    let mut sign = 1.0;
-    let mut any = false;
-    for (k, c) in s.chars().enumerate() {
-        if (c == '+' || c == '-') && k > 0 && !cur.trim().is_empty() {
-            total += sign * cur.trim().parse::<f64>().ok()?;
-            sign = if c == '-' { -1.0 } else { 1.0 };
-            cur.clear();
-            any = true;
-        } else {
-            cur.push(c);
+    let cleaned: String = s
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            '{' => '(',
+            '}' => ')',
+            c => c,
+        })
+        .collect();
+    let b: Vec<char> = cleaned.chars().collect();
+    let mut pos = 0usize;
+    let v = eval_sum(&b, &mut pos)?;
+    if pos < b.len() {
+        return None;
+    }
+    Some(v)
+}
+
+fn eval_sum(b: &[char], pos: &mut usize) -> Option<f64> {
+    let mut acc = eval_product(b, pos)?;
+    while let Some(&c) = b.get(*pos) {
+        match c {
+            '+' => {
+                *pos += 1;
+                acc += eval_product(b, pos)?;
+            }
+            '-' => {
+                *pos += 1;
+                acc -= eval_product(b, pos)?;
+            }
+            _ => break,
         }
     }
-    total += sign * cur.trim().parse::<f64>().ok()?;
-    let _ = any;
-    Some(total)
+    Some(acc)
+}
+
+fn eval_product(b: &[char], pos: &mut usize) -> Option<f64> {
+    let mut acc = eval_atom(b, pos)?;
+    while let Some(&c) = b.get(*pos) {
+        match c {
+            '*' => {
+                *pos += 1;
+                acc *= eval_atom(b, pos)?;
+            }
+            '/' => {
+                *pos += 1;
+                let d = eval_atom(b, pos)?;
+                if d.abs() < 1e-12 {
+                    return None;
+                }
+                acc /= d;
+            }
+            _ => break,
+        }
+    }
+    Some(acc)
+}
+
+fn eval_atom(b: &[char], pos: &mut usize) -> Option<f64> {
+    match b.get(*pos)? {
+        '-' => {
+            *pos += 1;
+            Some(-eval_atom(b, pos)?)
+        }
+        '+' => {
+            *pos += 1;
+            eval_atom(b, pos)
+        }
+        '(' => {
+            *pos += 1;
+            let v = eval_sum(b, pos)?;
+            if b.get(*pos) != Some(&')') {
+                return None;
+            }
+            *pos += 1;
+            Some(v)
+        }
+        _ => {
+            let start = *pos;
+            while b
+                .get(*pos)
+                .map(|c| c.is_ascii_digit() || *c == '.')
+                .unwrap_or(false)
+            {
+                *pos += 1;
+            }
+            if *pos == start {
+                return None;
+            }
+            b[start..*pos].iter().collect::<String>().parse().ok()
+        }
+    }
 }
 
 /// `%` comments run to end of line (but `\%` is a literal).
@@ -570,14 +649,13 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
     };
     let env = parse_opts(&env_opts, unit);
     let root = Frame {
-        sx: env.scale.0,
-        sy: env.scale.1,
+        m: [1.0, 0.0, 0.0, 1.0],
         tx: 0.0,
         ty: 0.0,
-        rot: env.rotate.to_radians(),
-        color: env.color.unwrap_or_else(|| "black".into()),
+        color: env.color.clone().unwrap_or_else(|| "black".into()),
         width: env.width.unwrap_or(0.4),
-    };
+    }
+    .child((0.0, 0.0), env.scale, env.rotate);
     let node_scale = styles
         .get("every node")
         .map(|sp| parse_opts(sp, unit).scale.0)
@@ -650,10 +728,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             i = ni;
             let o = parse_opts(&optxt, unit);
             let shift = (o.shift.0 + o.xshift, o.shift.1 + o.yshift);
-            let mut f = frames.last().unwrap().child(shift, o.scale);
-            if o.rotate != 0.0 {
-                f.rot += o.rotate.to_radians();
-            }
+            let mut f = frames.last().unwrap().child(shift, o.scale, o.rotate);
             if let Some(c) = o.color {
                 f.color = c;
             }
@@ -1173,18 +1248,61 @@ fn finish_node(
 }
 
 fn parse_pair(s: &str) -> Option<(f64, f64)> {
-    let s = s.trim().trim_start_matches('{').trim_start_matches('(');
-    let inner: String = s.chars().take_while(|c| *c != ')').collect();
-    if let Some((ang, rad)) = inner.split_once(':') {
-        // polar (angle:radius); angles may be sums like 45+240
-        let a = eval_num(ang)?;
-        let r = eval_num(rad)?;
+    // strip balanced outer () / {} wrappers
+    let mut t = s.trim();
+    loop {
+        let b: Vec<char> = t.chars().collect();
+        if b.is_empty() {
+            break;
+        }
+        let (open, close) = (b[0], b[b.len() - 1]);
+        if !((open == '(' && close == ')') || (open == '{' && close == '}')) {
+            break;
+        }
+        // only strip when the outer pair actually matches
+        let mut depth = 0i32;
+        let mut matches = true;
+        for (k, c) in b.iter().enumerate() {
+            match c {
+                '(' | '{' => depth += 1,
+                ')' | '}' => {
+                    depth -= 1;
+                    if depth == 0 && k != b.len() - 1 {
+                        matches = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !matches {
+            break;
+        }
+        t = &t[1..t.len() - 1];
+    }
+    // split at a top-level ':' (polar) or ',' (pair)
+    let b: Vec<char> = t.chars().collect();
+    let mut depth = 0i32;
+    let mut colon = None;
+    let mut comma = None;
+    for (k, c) in b.iter().enumerate() {
+        match c {
+            '(' | '{' => depth += 1,
+            ')' | '}' => depth -= 1,
+            ':' if depth == 0 && colon.is_none() => colon = Some(k),
+            ',' if depth == 0 && comma.is_none() => comma = Some(k),
+            _ => {}
+        }
+    }
+    if let Some(k) = colon {
+        let a = eval_num(&t[..k])?;
+        let r = eval_num(&t[k + 1..])?;
         let a = a.to_radians();
         return Some((r * a.cos(), r * a.sin()));
     }
-    let mut it = inner.split(',');
-    let x = eval_num(it.next()?)?;
-    let y = eval_num(it.next()?)?;
+    let k = comma?;
+    let x = eval_num(&t[..k])?;
+    let y = eval_num(&t[k + 1..])?;
     Some((x, y))
 }
 
