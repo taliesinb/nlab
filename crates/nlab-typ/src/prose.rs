@@ -52,6 +52,11 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
             if body.contains("<a ") || body.contains("http") || body.contains("](") {
                 return c[0].to_string();
             }
+            // an unclosed \[ (author typo) can swallow env fences and
+            // paragraphs; leave those spans alone
+            if body.contains("=--") || body.contains("+--") || body.len() > 4000 {
+                return c[0].to_string();
+            }
             let (tex, anchors) = split_math_labels(body);
             stash.put(format!("{}{}", math_to_typst(&tex, true), anchors))
         })
@@ -305,6 +310,9 @@ fn extract_fences(src: &str, stash: &mut Stash) -> String {
             let id_arg = id
                 .map(|i| format!(", id: \"{}\"", i))
                 .unwrap_or_default();
+            // blank lines around the markers: an unterminated raw-HTML
+            // block would otherwise swallow the fence placeholder
+            out.push(String::new());
             out.push(stash.put(format!("#nlab-env(\"{}\", \"{}\"{})[", kind, style, id_arg)));
             open_stack.push(true);
             continue;
@@ -315,6 +323,7 @@ fn extract_fences(src: &str, stash: &mut Stash) -> String {
                 continue;
             }
             if open_stack.pop().unwrap_or(false) {
+                out.push(String::new());
                 out.push(stash.put("]".to_string()));
             }
             continue;
@@ -519,7 +528,13 @@ fn markdown_to_typst(src: &str) -> String {
                     out.push_str("#[");
                     link_semi.push(false);
                 } else if let Some(anchor) = dest.strip_prefix('#') {
-                    out.push_str(&format!("#nlab-anchor(\"{}\")[", anchor));
+                    // authors sometimes write `](#{#Id})` or other junk
+                    let anchor = anchor
+                        .trim_matches(|c: char| c == '{' || c == '}' || c == '#');
+                    out.push_str(&format!(
+                        "#nlab-anchor(\"{}\")[",
+                        sanitize_id(anchor)
+                    ));
                     link_semi.push(true);
                 } else {
                     let dest = dest.replace('\\', "%5C").replace('"', "%22");
@@ -583,10 +598,14 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let xarrow = scope-or("xarrow", none)
 #let operatorname = scope-or("operatorname", none)
 #let operatornamewithlimits = scope-or("operatornamewithlimits", none)
-#let underset = scope-or("underset", none)
-#let overset = scope-or("overset", none)
+#let one-arg-ok(f) = (..args) => {
+  let p = args.pos()
+  if p.len() == 1 { p.at(0) } else { f(..args) }
+}
+#let underset = one-arg-ok(scope-or("underset", none))
+#let overset = one-arg-ok(scope-or("overset", none))
 #let underoverset = scope-or("underoverset", none)
-#let stackrel = scope-or("stackrel", none)
+#let stackrel = one-arg-ok(scope-or("stackrel", none))
 #let textmath = scope-or("textmath", none)
 #let big = scope-or("big", none)
 #let Big = scope-or("Big", none)
@@ -802,6 +821,12 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 
 pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
     let mut stash = Stash { items: Vec::new() };
+    // windows-1252 mojibake control chars can't encode in HTML
+    let src: String = src
+        .chars()
+        .filter(|c| !('\u{80}'..='\u{9F}').contains(c))
+        .collect();
+    let src = src.as_str();
     // strip trailing metadata lines
     let src: String = src
         .lines()
@@ -1133,13 +1158,13 @@ terminology|notn|notation|conjecture|assumption|exercise";
     // an anchor at the end of a heading would ride into the heading
     // body and be duplicated by #outline(); move it below the heading
     let heading_anchor_re =
-        regex::Regex::new(r"(?m)^(#+[^\n]*?)\s*\{#([A-Za-z0-9:_-]+)\}\s*$").unwrap();
+        regex::Regex::new(r"(?m)^(#+[^\n]*?)\s*\{#([A-Za-z0-9:_-]+)\}([^\n]*)$").unwrap();
     let src = heading_anchor_re
-        .replace_all(&src, "$1\n\n{#$2}")
+        .replace_all(&src, "$1$3\n\n{#$2}")
         .to_string();
     // Maruku anchor IALs: {#Id} standalone or inline; a repeated id
     // would be a duplicate typst label, so only the first one anchors
-    let anchor_re = regex::Regex::new(r"(^|[^(])\{#([A-Za-z0-9:_-]+)\}").unwrap();
+    let anchor_re = regex::Regex::new(r"(^|[^(#])\{#([A-Za-z0-9:_-]+)\}").unwrap();
     let mut seen_anchors = std::collections::HashSet::new();
     let src = anchor_re
         .replace_all(&src, |c: &regex::Captures| {
