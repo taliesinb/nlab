@@ -45,6 +45,12 @@ def markup_escape(t: str) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "dist/typst"))
+    ap.add_argument(
+        "--link-base", default="../",
+        help="prefix for cross-page links (default '../' for slug-dir routing)")
+    ap.add_argument(
+        "--link-ext", default="/",
+        help="suffix for cross-page links (default '/'; use '.html' for flat files)")
     args = ap.parse_args()
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -87,22 +93,44 @@ def main():
         return target
 
     img_re = re.compile(r'nlab-image\("files/([^"]+)"')
+    page_re = re.compile(r'nlab-page\("(\d+)"')
+    base_re = re.compile(
+        r'(#let nlab-page-base = sys\.inputs\.at\("nlab-base", default: )""\)'
+    )
+    ext_re = re.compile(
+        r'(#let nlab-page-ext = sys\.inputs\.at\("nlab-ext", default: )"\.html"\)'
+    )
+
+    # assign every slug first so cross-links can resolve forward
     taken: dict[str, str] = {}
-    rows = []
-    for typ in sorted(SRC.glob("*.typ"), key=lambda p: int(p.stem)):
+    slug_of: dict[str, str] = {}
+    pages = sorted(SRC.glob("*.typ"), key=lambda p: int(p.stem))
+    for typ in pages:
         pid = typ.stem
-        name = names.get(pid, pid)
-        slug = slugify(name)
+        slug = slugify(names.get(pid, pid))
         if slug in taken:
             slug = f"{slug}-{pid}"
         taken[slug] = pid
+        slug_of[pid] = slug
+
+    rows = []
+    for typ in pages:
+        pid = typ.stem
+        slug = slug_of[pid]
         text = typ.read_text(errors="replace")
         text = img_re.sub(
             lambda m: f'nlab-image("files/{resolve_image(m.group(1))}"',
             text,
         )
+        # cross-links by canonical slug instead of page id
+        text = page_re.sub(
+            lambda m: f'nlab-page("{slug_of.get(m.group(1), m.group(1))}"',
+            text,
+        )
+        text = base_re.sub(f'\\g<1>"{args.link_base}")', text, count=1)
+        text = ext_re.sub(f'\\g<1>"{args.link_ext}")', text, count=1)
         (out / f"{slug}.typ").write_text(text)
-        rows.append((name, slug, pid))
+        rows.append((names.get(pid, pid), slug, pid))
 
     index = ["#set page(margin: 2cm)", "= nLab typst pages", ""]
     for name, slug, pid in sorted(rows, key=lambda r: r[0].lower()):
