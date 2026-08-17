@@ -139,6 +139,12 @@ def main():
         (out / f"{slug}.typ").write_text(text)
         rows.append((names.get(pid, pid), slug, pid))
 
+    # prune pages whose slug changed since the last run
+    keep = set(taken) | {"_index"}
+    for old in out.glob("*.typ"):
+        if old.stem not in keep:
+            old.unlink()
+
     index = ["#set page(margin: 2cm)", "= nLab typst pages", ""]
     for name, slug, pid in sorted(rows, key=lambda r: r[0].lower()):
         index.append(
