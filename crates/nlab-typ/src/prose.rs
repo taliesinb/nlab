@@ -30,7 +30,7 @@ impl Stash {
 
 /// Pull `\label{Id}` out of a math body; returns (tex, typst anchors).
 fn split_math_labels(tex: &str) -> (String, String) {
-    let re = regex::Regex::new(r"\\label\{([A-Za-z0-9:_.-]+)\}").unwrap();
+    let re = regex::Regex::new(r"\\label\{([\w:.-]+)\}").unwrap();
     let mut anchors = String::new();
     let tex = re
         .replace_all(tex, |c: &regex::Captures| {
@@ -113,6 +113,20 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
 }
 
 fn math_to_typst(tex: &str, display: bool) -> String {
+    // \begin{svg}[[!include SVG rightarrow]]\end{svg} idiom: an inline
+    // arrow image used as a stackrel base
+    let tex = regex::Regex::new(r"(?s)\\begin\{svg\}.*?\\end\{svg\}")
+        .unwrap()
+        .replace_all(tex, |c: &regex::Captures| {
+            if c[0].contains("left") {
+                "\\longleftarrow"
+            } else {
+                "\\longrightarrow"
+            }
+            .to_string()
+        })
+        .to_string();
+    let tex = tex.as_str();
     // numeric character references inside math ($C &#8696; D$)
     let tex = regex::Regex::new(r"&#(\d+);")
         .unwrap()
@@ -466,7 +480,7 @@ fn sanitize_id(id: &str) -> String {
     id.trim()
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || ":_.-".contains(c) {
+            if c.is_alphanumeric() || ":_.-".contains(c) {
                 c
             } else {
                 '-'
@@ -971,6 +985,51 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "")
         .to_string();
+    // author typos pairing \[ with \end{equation} (or the reverse):
+    // convert only the spans whose NEAREST terminator is the wrong one
+    let src = {
+        let mut out = String::new();
+        let mut rest = src.as_str();
+        loop {
+            let i_br = rest.find("\\[");
+            let i_eq = rest.find("\\begin{equation}");
+            let (opener, i, olen) = match (i_br, i_eq) {
+                (Some(a), Some(b)) if a < b => ("\\[", a, 2),
+                (Some(a), None) => ("\\[", a, 2),
+                (_, Some(b)) => ("\\begin{equation}", b, 16),
+                (None, None) => break,
+            };
+            let after = &rest[i + olen..];
+            let want = if opener == "\\[" { "\\]" } else { "\\end{equation}" };
+            let wrong = if opener == "\\[" { "\\end{equation}" } else { "\\]" };
+            let c_ok = after.find(want);
+            let c_bad = after.find(wrong);
+            let convert = match (c_ok, c_bad) {
+                (Some(a), Some(b)) => b < a,
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            if convert {
+                let e = c_bad.unwrap();
+                let body = &after[..e];
+                if !(body.contains("=--") || body.contains("+--") || body.len() > 4000) {
+                    out.push_str(&rest[..i]);
+                    let (tex, anchors) = split_math_labels(body);
+                    out.push_str(&stash.put(format!(
+                        "{}{}",
+                        math_to_typst(&tex, true),
+                        anchors
+                    )));
+                    rest = &after[e + wrong.len()..];
+                    continue;
+                }
+            }
+            out.push_str(&rest[..i + olen]);
+            rest = after;
+        }
+        out.push_str(rest);
+        out
+    };
     // \begin{equation} bodies are display math the earlier extractors
     // do not cover
     let eq_re = regex::Regex::new(
@@ -1032,7 +1091,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
     // one sequential pass so a stray \end (author error) is the one
     // dropped, not the document's final legitimate close
     let env_re = regex::Regex::new(&format!(
-        r"\\(begin|end)\{{({})\}}([ \t]*\[([^\]\n]*)\])?(\s*\\label\{{([A-Za-z0-9:_.-]+)\}})?",
+        r"\\(begin|end)\{{({})\}}([ \t]*\[([^\]\n]*)\])?(\s*\\label\{{([\w:.-]+)\}})?",
         ENVS
     ))
     .unwrap();
@@ -1205,14 +1264,19 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .to_string();
     // an anchor at the end of a heading would ride into the heading
     // body and be duplicated by #outline(); move it below the heading
+    // Maruku's colon form `{: #Id}` is the same anchor IAL as `{#Id}`
+    let src = regex::Regex::new(r"\{:\s*#([\w:-]+)\s*\}")
+        .unwrap()
+        .replace_all(&src, "{#$1}")
+        .to_string();
     let heading_anchor_re =
-        regex::Regex::new(r"(?m)^(#+[^\n]*?)\s*\{#([A-Za-z0-9:_-]+)\}([^\n]*)$").unwrap();
+        regex::Regex::new(r"(?m)^(#+[^\n]*?)\s*\{#([\w:-]+)\}([^\n]*)$").unwrap();
     let src = heading_anchor_re
         .replace_all(&src, "$1$3\n\n{#$2}")
         .to_string();
     // Maruku anchor IALs: {#Id} standalone or inline; a repeated id
     // would be a duplicate typst label, so only the first one anchors
-    let anchor_re = regex::Regex::new(r"(^|[^(#])\{#([A-Za-z0-9:_-]+)\}").unwrap();
+    let anchor_re = regex::Regex::new(r"(^|[^(#])\{#([\w:-]+)\}").unwrap();
     let mut seen_anchors = std::collections::HashSet::new();
     let src = anchor_re
         .replace_all(&src, |c: &regex::Captures| {
@@ -1223,6 +1287,13 @@ terminology|notn|notation|conjecture|assumption|exercise";
                 c[1].to_string()
             }
         })
+        .to_string();
+    // a stashed block (diagram, math) whose source line was indented
+    // must not become an indented code block under cmark
+    // (3 spaces: never code at top level, still list-item continuation)
+    let src = regex::Regex::new(r"(?m)^[ \t]{4,}(\u{E000}\d+\u{E001})[ \t\r]*$")
+        .unwrap()
+        .replace_all(&src, "   $1")
         .to_string();
     let body = markdown_to_typst(&src);
     // resolve placeholders (escape pass never touches PUA chars); a
@@ -1257,7 +1328,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
     // survives (anchors, env ids, and math \label{}s share a namespace)
     let mut seen = std::collections::HashSet::new();
     let dedupe_re = regex::Regex::new(
-        r#"#metadata\(none\)#label\("([A-Za-z0-9:_.-]+)"\)|, id: "([A-Za-z0-9:_.-]+)""#,
+        r#"#metadata\(none\)#label\("([\w:.-]+)"\)|, id: "([\w:.-]+)""#,
     )
     .unwrap();
     let body = dedupe_re

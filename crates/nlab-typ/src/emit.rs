@@ -438,6 +438,9 @@ pub(crate) fn nativize_calls(code: &str) -> String {
                     }
                     prev = ch;
                 }
+                if std::env::var("NLAB_DEBUG_BAL").is_ok() && (bad || depth != 0) {
+                    eprintln!("UNBALANCED ({} {}): {}", bad, depth, res);
+                }
                 if bad || depth != 0 {
                     let mut short = tex.trim().replace('\n', " ");
                     if short.len() > 120 {
