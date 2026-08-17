@@ -749,6 +749,8 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
     let mut floats: Vec<(usize, usize, String)> = Vec::new();
     // (top object, bottom object, arrow cell, horizontal offset in pt)
     let mut vvlines: Vec<(RC, RC, Cell, f64)> = Vec::new();
+    // 2-cell diagonals, held back until we know the other edges
+    let mut twocells: Vec<(usize, usize, RC, RC, Cell)> = Vec::new();
     for (r, row) in grid.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let k = kind(cell).to_string();
@@ -910,6 +912,16 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                 b = bb;
             }
             match (a, b) {
+                (Some(a), Some(b))
+                    if k == "d"
+                        && matches!(
+                            cget(cell, "cmd"),
+                            Some("seArrow") | Some("swArrow") | Some("neArrow")
+                                | Some("nwArrow")
+                        ) =>
+                {
+                    twocells.push((r, c, a, b, cell.clone()));
+                }
                 (Some(a), Some(b)) => edges.push((a, b, cell.clone())),
                 _ => {
                     if matches!(cget(cell, "cmd"), Some("Downarrow") | Some("Uparrow")) {
@@ -918,6 +930,32 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     return ("dangling".into(), None);
                 }
             }
+        }
+    }
+
+    // a 2-cell diagonal whose endpoints another edge already connects
+    // is an annotation riding that path: float it at its own cell
+    for (r, c, a, b, cell) in twocells {
+        let dup = edges.iter().any(|(ea, eb, _)| {
+            (*ea == a && *eb == b) || (*ea == b && *eb == a)
+        });
+        if dup {
+            let glyph = match cget(&cell, "cmd") {
+                Some("seArrow") => "⇘",
+                Some("neArrow") => "⇗",
+                Some("nwArrow") => "⇖",
+                _ => "⇙",
+            };
+            let tex = if let Some(l) =
+                cget(&cell, "east").or_else(|| cget(&cell, "west"))
+            {
+                format!("{{{}}}_{{{}}}", glyph, l)
+            } else {
+                glyph.to_string()
+            };
+            floats.push((r, c, tex));
+        } else {
+            edges.push((a, b, cell));
         }
     }
 
