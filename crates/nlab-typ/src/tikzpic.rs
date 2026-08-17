@@ -925,7 +925,7 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
         return None;
     }
     let code = format!(
-        "box(baseline: 42%, cetz.canvas(length: {}pt, {{\n    import cetz.draw: *\n    {}\n  }}))",
+        "box(baseline: 42%, cetz.canvas(length: {}pt, {{\n    import cetz.draw: *\n    set-style(mark: (length: 4.2pt, width: 5.6pt))\n    {}\n  }}))",
         unit,
         out.join("\n    ")
     );
