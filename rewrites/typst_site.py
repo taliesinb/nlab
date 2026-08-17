@@ -23,6 +23,8 @@ FILES_ROOT = ROOT / "build/nlab-files"
 
 def slugify(name: str) -> str:
     s = unicodedata.normalize("NFKC", name).lower()
+    # keep negative numbers distinct: "(-2)-category" vs "2-category"
+    s = re.sub(r"\((-|−)(\d)", r"(minus-\2", s)
     s = re.sub(r"['’\"]", "", s)
     s = re.sub(r"[^\w]+", "-", s, flags=re.UNICODE)
     s = s.strip("-")
@@ -105,7 +107,12 @@ def main():
     taken: dict[str, str] = {}
     slug_of: dict[str, str] = {}
     pages = sorted(SRC.glob("*.typ"), key=lambda p: int(p.stem))
-    for typ in pages:
+    # exact-name pages claim their slug first, so a mangled name
+    # ("(-2)-category") can never steal "2-category" from the real one
+    def exactness(pid: str) -> int:
+        name = names.get(pid, pid)
+        return 0 if slugify(name) == name.lower().replace(" ", "-") else 1
+    for typ in sorted(pages, key=lambda p: (exactness(p.stem), int(p.stem))):
         pid = typ.stem
         slug = slugify(names.get(pid, pid))
         if slug in taken:
