@@ -501,18 +501,36 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
             let (arrow, rest2) = read_group(&rest);
             if rest2.trim().is_empty() {
                 if which == "stackrel" {
+                    // a decker with an empty layer is transparent:
+                    // \stackrel{}{X} == \stackrel{X}{} == X
+                    if label.trim().is_empty() {
+                        return classify_cell(&arrow);
+                    }
+                    if arrow.trim().is_empty() {
+                        return classify_cell(&label);
+                    }
                     let top = classify_cell(&label);
                     let bottom = classify_cell(&arrow);
-                    if kind(&top) == "h"
-                        && kind(&bottom) == "h"
-                        && get(&top, "dir") != Some("~")
-                        && get(&bottom, "dir") != Some("~")
-                    {
-                        let mut res = cell("h");
-                        let dir = get(&top, "dir").unwrap().to_string();
-                        set(&mut res, "dir", dir);
-                        res.push(("pair", Val::Parts(vec![top, bottom])));
-                        return res;
+                    // flatten nested stacks: each side is an h-cell or
+                    // an already-built pair of h-cells
+                    let flat = |c: Cell| -> Option<Vec<Cell>> {
+                        if kind(&c) != "h" || get(&c, "dir") == Some("~") {
+                            return None;
+                        }
+                        match c.iter().find(|(k, _)| *k == "pair") {
+                            Some((_, Val::Parts(p))) => Some(p.clone()),
+                            _ => Some(vec![c]),
+                        }
+                    };
+                    if let (Some(mut a), Some(b)) = (flat(top), flat(bottom)) {
+                        if a.len() + b.len() <= 4 {
+                            let mut res = cell("h");
+                            let dir = get(&a[0], "dir").unwrap().to_string();
+                            set(&mut res, "dir", dir);
+                            a.extend(b);
+                            res.push(("pair", Val::Parts(a)));
+                            return res;
+                        }
                     }
                 }
                 if which == "underoverset" {

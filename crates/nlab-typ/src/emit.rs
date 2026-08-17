@@ -1042,18 +1042,26 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         ));
     }
 
-    // parallel vertical arrows as explicit coordinate lines
+    // parallel vertical arrows: explicit coordinate endpoints at the
+    // column center (fractional y controls extent, so nodes cannot
+    // un-clip them) separated by absolute pt shifts (consistent gap
+    // regardless of column width)
     for (a0, b0, pc, off) in &vvlines {
-        let x = cmap(a0.1) as f64 + off / 28.0;
+        let x = cmap(a0.1) as f64;
         let ytop = rmap(a0.0) as f64 + 0.30;
         let ybot = rmap(b0.0) as f64 - 0.30;
         let up = cget(pc, "dir") == Some("u");
         let (y1, y2) = if up { (ybot, ytop) } else { (ytop, ybot) };
+        // fletcher +shift is left-of-travel: screen-east for a down
+        // edge, screen-west for an up edge
+        let shift = if up { -*off } else { *off };
         let mark = edge_mark(pc);
         let mut args = vec![
-            format!("({:.3}, {:.2})", x, y1),
-            format!("({:.3}, {:.2})", x, y2),
+            format!("({:.2}, {:.2})", x, y1),
+            format!("({:.2}, {:.2})", x, y2),
             format!("\"{}\"", mark),
+            format!("shift: {:.1}pt", shift),
+            "snap-to: (none, none)".to_string(),
         ];
         for (key, side) in [("west", "left"), ("east", "right")] {
             if let Some(l) = cget(pc, key) {
@@ -1090,7 +1098,9 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     ts(mid)
                 ));
             }
-            for (i, sub) in parts(&cell).unwrap().iter().enumerate() {
+            let subs = parts(&cell).unwrap();
+            let np = subs.len() as i32;
+            for (i, sub) in subs.iter().enumerate() {
                 let sdir = cget(sub, "dir").unwrap();
                 let (aa, bb) = if matches!(sdir, "r" | "lr" | "~") {
                     (left, right)
@@ -1106,8 +1116,10 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     args.push(format!("label-side: {}", label_side(sdir, want)));
                     args.push("label-sep: 0.35em".to_string());
                 }
-                let up = if sdir != "l" { 3 } else { -3 };
-                let shift = if i == 0 { up } else { -up };
+                // screen offset top-to-bottom; fletcher shift is
+                // relative to travel direction, so flip for leftward
+                let screen = (np - 1 - 2 * i as i32) * 3;
+                let shift = if sdir == "l" { -screen } else { screen };
                 args.push(format!("shift: {}pt", shift));
                 lines.push(format!("  edge({}),", args.join(", ")));
             }
