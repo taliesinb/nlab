@@ -99,6 +99,9 @@ struct Opts {
     looseness: f64,          // control-point distance multiplier
     latex_tip: bool,         // >=latex / >=stealth: filled arrowheads
     path_only: bool,         // \path: invisible, only decorations show
+    dense: bool,             // densely dashed/dotted
+    fill_alpha: Option<f64>, // fill opacity
+    draw_alpha: Option<f64>, // draw opacity
 }
 
 /// tikz color expressions: plain names plus `blue!15` tints.
@@ -452,8 +455,23 @@ fn parse_opts(opts: &str, unit: f64) -> Opts {
             o.arrow_start = true;
         } else if p == "dashed" {
             o.dashed = true;
+        } else if p == "denselydashed" {
+            o.dashed = true;
+            o.dense = true;
         } else if p == "dotted" {
             o.dotted = true;
+        } else if p == "denselydotted" {
+            o.dotted = true;
+            o.dense = true;
+        } else if let Some(v) = p.strip_prefix("fillopacity=") {
+            o.fill_alpha = format!("0{}", v).parse().ok().or_else(|| v.parse().ok());
+        } else if let Some(v) = p.strip_prefix("drawopacity=") {
+            o.draw_alpha = format!("0{}", v).parse().ok().or_else(|| v.parse().ok());
+        } else if let Some(v) = p.strip_prefix("opacity=") {
+            if let Some(a) = format!("0{}", v).parse().ok().or_else(|| v.parse().ok()) {
+                o.fill_alpha = Some(a);
+                o.draw_alpha = Some(a);
+            }
         } else if p == "bendleft" {
             o.bend = 30.0;
         } else if p == "bendright" {
@@ -520,6 +538,26 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
         for (name, spec) in defs {
             let wr = regex::Regex::new(&format!(r"\b{}\b", regex::escape(&name))).unwrap();
             body = wr.replace_all(&body, spec.as_str()).to_string();
+        }
+    }
+    // \def\NAME{VALUE} macros: substitute (longest names first, with
+    // a boundary so \yi does not clobber \yii)
+    let mut body = body;
+    {
+        let re = regex::Regex::new(r"\\def\\([A-Za-z]+)\{([^}]*)\}").unwrap();
+        let mut defs: Vec<(String, String)> = re
+            .captures_iter(&body)
+            .map(|c| (c[1].to_string(), c[2].to_string()))
+            .collect();
+        body = re.replace_all(&body, "").to_string();
+        defs.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
+        for (name, val) in defs {
+            // no lookahead in the regex crate: capture the boundary
+            let wr = regex::Regex::new(&format!(r"\\{}([^A-Za-z]|$)", regex::escape(&name))).unwrap();
+            let val = val.trim().to_string();
+            body = wr
+                .replace_all(&body, |c: &regex::Captures| format!("{}{}", val, &c[1]))
+                .to_string();
         }
     }
     let body = body.as_str();
@@ -772,6 +810,18 @@ pub(crate) fn to_cetz(body: &str, env_opts: &str) -> Option<(String, Vec<String>
             o.path_only = is_path;
             if is_filldraw && o.fill.is_none() {
                 o.fill = o.color.clone().or_else(|| Some("black".into()));
+            }
+            if is_fill && o.fill.is_none() {
+                o.fill = o.color.clone();
+            }
+            if let Some(a) = o.fill_alpha {
+                if let Some(f) = o.fill.take() {
+                    o.fill = Some(format!("{}.transparentize({:.0}%)", f, (1.0 - a) * 100.0));
+                }
+            }
+            if let Some(a) = o.draw_alpha {
+                let c = o.color.take().unwrap_or_else(|| "black".into());
+                o.color = Some(format!("{}.transparentize({:.0}%)", c, (1.0 - a) * 100.0));
             }
             let frame = frames.last().unwrap().clone();
             if o.color.is_none() {
@@ -1163,19 +1213,22 @@ fn parse_path(
     let width = opts.width.unwrap_or(0.4);
     let color = opts.color.clone().unwrap_or_else(|| "black".into());
     let mut stroke_parts = vec![format!("{}pt + {}", width, color)];
-    if opts.dashed {
-        stroke_parts.push("dash: \"dashed\"".into());
-    } else if opts.dotted {
-        stroke_parts.push("dash: \"dotted\"".into());
+    let dash_name = if opts.dotted {
+        if opts.dense { "densely-dotted" } else { "dotted" }
+    } else if opts.dense {
+        "densely-dashed"
+    } else {
+        "dashed"
+    };
+    if opts.dashed || opts.dotted {
+        stroke_parts.push(format!("dash: \"{}\"", dash_name));
     }
     let stroke = if stroke_parts.len() == 1 {
         format!("stroke: {}", stroke_parts[0])
     } else {
         format!(
-            "stroke: (paint: {}, thickness: {}pt, dash: {})",
-            color,
-            width,
-            if opts.dashed { "\"dashed\"" } else { "\"dotted\"" }
+            "stroke: (paint: {}, thickness: {}pt, dash: \"{}\")",
+            color, width, dash_name
         )
     };
     // tikz's default arrow tip is the thin "to" barb; only >=latex
@@ -1385,6 +1438,57 @@ fn parse_path(
                 stroke,
                 fill
             ));
+            continue;
+        }
+        if rest.starts_with("plot") {
+            // plot[smooth] coordinates {(x,y) (x,y) ...} -> catmull
+            i += 4;
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            if b.get(i) == Some(&'[') {
+                while i < b.len() && b[i] != ']' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            let word: String = b[i..].iter().take(11).collect();
+            if word == "coordinates" {
+                i += 11;
+            }
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            let mut pts: Vec<(f64, f64)> = Vec::new();
+            if b.get(i) == Some(&'{') {
+                let start = i + 1;
+                let mut j = start;
+                while j < b.len() && b[j] != '}' {
+                    j += 1;
+                }
+                let inner: String = b[start..j].iter().collect();
+                i = j + 1;
+                for c in regex::Regex::new(r"\(([^()]*)\)").unwrap().captures_iter(&inner) {
+                    if let Some(pr) = parse_pair(&format!("({})", &c[1])) {
+                        let (x, y) = frame.apply(pr);
+                        pts.push((x + cdx, y + cdy));
+                    }
+                }
+            }
+            if pts.len() >= 2 {
+                let list: Vec<String> = pts.iter().map(|p| fmt_pt(*p)).collect();
+                ops.push(format!(
+                    "catmull({}, tension: .4, {}{})",
+                    list.join(", "),
+                    stroke,
+                    mark
+                ));
+                let (x, y) = *pts.last().unwrap();
+                last = Some(EndPt { x, y, hw: 0.0, hh: 0.0, round: false });
+            }
             continue;
         }
         if rest.starts_with("rectangle") {
