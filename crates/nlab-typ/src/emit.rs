@@ -751,10 +751,30 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
         for (c, cell) in row.iter().enumerate() {
             let k = kind(cell).to_string();
             if k == "dd" {
-                for part in parts(cell).unwrap_or(&[]) {
+                let ps = parts(cell).unwrap_or(&[]);
+                let two_way = ps.len() == 2
+                    && ps
+                        .iter()
+                        .map(|p| cget(p, "dir"))
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                        == 2;
+                for (pi, part) in ps.iter().enumerate() {
                     let (a, b) = resolve_diagonal(r, c, cget(part, "dir").unwrap());
                     match (a, b) {
-                        (Some(a), Some(b)) => edges.push((a, b, part.clone())),
+                        (Some(a), Some(b)) => {
+                            let mut pc = part.clone();
+                            // opposite diagonals sharing endpoints (an
+                            // adjoint pair) must not overlap
+                            if two_way {
+                                grid::set(
+                                    &mut pc,
+                                    "vshift",
+                                    if pi == 0 { "3" } else { "3" }.to_string(),
+                                );
+                            }
+                            edges.push((a, b, pc));
+                        }
                         _ => return ("dangling".into(), None),
                     }
                 }
@@ -779,17 +799,9 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                     _ => return ("dangling".into(), None),
                 };
                 let ps = parts(cell).unwrap().to_vec();
-                let n = ps.len() as i32;
-                let labeled = ps
-                    .iter()
-                    .any(|p| cget(p, "east").is_some() || cget(p, "west").is_some());
-                let spread = if labeled { 7 } else { 3 };
+                let n = ps.len();
+                let mut pcs: Vec<Cell> = Vec::new();
                 for (i, part) in ps.iter().enumerate() {
-                    let (mut a, mut b) = (a0, b0);
-                    let up = cget(part, "dir") == Some("u");
-                    if up {
-                        std::mem::swap(&mut a, &mut b);
-                    }
                     let mut pc = part.clone();
                     // the first arrow's label reads better on the west
                     // side, away from its right-hand neighbors
@@ -801,7 +813,21 @@ pub(crate) fn emit(grid: &[Vec<Cell>]) -> (String, Option<String>) {
                             }
                         }
                     }
-                    let mut sh = (2 * i as i32 - (n - 1)) * spread;
+                    pcs.push(pc);
+                }
+                // spread wider only when a label sits BETWEEN arrows
+                let inner = pcs.iter().enumerate().any(|(i, p)| {
+                    (i + 1 < n && cget(p, "east").is_some())
+                        || (i > 0 && cget(p, "west").is_some())
+                });
+                let spread = if inner { 7 } else { 3 };
+                for (i, mut pc) in pcs.into_iter().enumerate() {
+                    let (mut a, mut b) = (a0, b0);
+                    let up = cget(&pc, "dir") == Some("u");
+                    if up {
+                        std::mem::swap(&mut a, &mut b);
+                    }
+                    let mut sh = (2 * i as i32 - (n as i32 - 1)) * spread;
                     if up {
                         sh = -sh;
                     }

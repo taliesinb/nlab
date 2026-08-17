@@ -509,6 +509,31 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
                         return res;
                     }
                 }
+                if which == "underoverset" {
+                    // adjoint pair: \underoverset{\underset{R}{<-}}
+                    // {\overset{L}{->}}{} (base empty or \bot/\dashv)
+                    let base = arrow.trim();
+                    if matches!(
+                        base,
+                        "" | "\\bot" | "\\perp" | "\\dashv" | "\\vdash"
+                            | "\\simeq" | "\\cong"
+                    ) {
+                        let top = classify_cell(&label);
+                        let bottom =
+                            classify_cell(label2.as_deref().unwrap_or(""));
+                        if kind(&top) == "h"
+                            && kind(&bottom) == "h"
+                            && get(&top, "dir") != Some("~")
+                            && get(&bottom, "dir") != Some("~")
+                        {
+                            let mut res = cell("h");
+                            let dir = get(&top, "dir").unwrap().to_string();
+                            set(&mut res, "dir", dir);
+                            res.push(("pair", Val::Parts(vec![top, bottom])));
+                            return res;
+                        }
+                    }
+                }
                 let at = arrow.trim();
                 if at == "=" || at == "\\simeq" || at == "\\cong" {
                     let mut res = cell("h");
@@ -757,7 +782,9 @@ fn double_diagonal(s: &str) -> Option<Cell> {
     let pre = trim_label(&s[..i1]);
     let post = trim_label(&s[i2 + 1 + c2.len()..]);
     for lab in [&pre, &post] {
-        if !lab.is_empty() && !top_cmds(lab).is_empty() {
+        // formatting commands (\mathcal etc.) are fine in a label;
+        // only another arrow disqualifies
+        if top_cmds(lab).iter().any(|c| is_arrow(c)) {
             return None;
         }
     }
