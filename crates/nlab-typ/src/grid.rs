@@ -536,7 +536,8 @@ pub(crate) fn classify_cell(cell_src: &str) -> Cell {
                 if which == "underoverset" {
                     // adjoint pair: \underoverset{\underset{R}{<-}}
                     // {\overset{L}{->}}{} (base empty or \bot/\dashv)
-                    let base = arrow.trim();
+                    let base_owned = regex_lite_strip_spacing(&arrow);
+                    let base = base_owned.trim();
                     let base_ok = base.is_empty()
                         || ["\\bot", "\\perp", "\\dashv", "\\vdash", "\\simeq", "\\cong"]
                             .iter()
