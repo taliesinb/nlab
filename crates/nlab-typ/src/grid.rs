@@ -723,7 +723,7 @@ fn parse_vd_cell(s: &str, tops: &[String]) -> Option<Cell> {
 /// groupoid source/target maps, adjunction pairs \uparrow\downarrow).
 fn multi_vertical(s: &str, tops: &[String]) -> Option<Cell> {
     let n_v = tops.iter().filter(|c| v_dir(c).is_some()).count();
-    if !(2..=3).contains(&n_v) {
+    if !(2..=4).contains(&n_v) {
         return None;
     }
     if tops.iter().any(|c| v_dir(c).is_none() && is_arrow(c)) {
