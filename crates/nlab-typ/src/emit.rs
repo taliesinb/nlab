@@ -386,15 +386,32 @@ pub(crate) fn nativize_calls(code: &str) -> String {
                 // zero-width base
                 let res = res.replace("()", "(zws)");
                 // reversed floor/ceil pairs (author typos) are parse
-                // errors: typst matches ⌊..⌋ like brackets
-                let res = regex::Regex::new(r"⌋([^⌊⌋⌈⌉]*)⌊")
-                    .unwrap()
-                    .replace_all(&res, "#sym.floor.r;$1#sym.floor.l;")
-                    .to_string();
-                let res = regex::Regex::new(r"⌉([^⌊⌋⌈⌉]*)⌈")
-                    .unwrap()
-                    .replace_all(&res, "#sym.ceil.r;$1#sym.ceil.l;")
-                    .to_string();
+                // errors: typst matches ⌊..⌋ like brackets. Only when
+                // a family is mis-nested, demote ALL its glyphs to
+                // plain symbols (well-paired ones must stay delimiters)
+                let mut res = res;
+                for (l, r, ls, rs) in [
+                    ('⌊', '⌋', "#sym.floor.l;", "#sym.floor.r;"),
+                    ('⌈', '⌉', "#sym.ceil.l;", "#sym.ceil.r;"),
+                ] {
+                    let mut depth = 0i64;
+                    let mut ok = true;
+                    for ch in res.chars() {
+                        if ch == l {
+                            depth += 1;
+                        } else if ch == r {
+                            depth -= 1;
+                            if depth < 0 {
+                                ok = false;
+                            }
+                        }
+                    }
+                    if !ok || depth != 0 {
+                        res = res
+                            .replace(l, ls)
+                            .replace(r, rs);
+                    }
+                }
                 // \atop with a missing side leaves a dangling comma
                 let res = regex::Regex::new(r"atop\(([^()]*), *\)")
                     .unwrap()

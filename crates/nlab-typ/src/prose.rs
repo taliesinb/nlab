@@ -88,10 +88,14 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
             if let Some(j) = found {
                 let tex: String = b[i + open..j].iter().collect();
                 // an unclosed $$ (author typo) pairs with the NEXT
-                // block's opener and swallows prose and env fences
+                // block's opener and swallows prose and env fences;
+                // emit the whole span literally (delimiters included)
+                // so pairing parity downstream is unchanged
                 if tex.contains("=--") || tex.contains("+--") || tex.len() > 4000 {
-                    out.push(b[i]);
-                    i += 1;
+                    for &ch in &b[i..j + open] {
+                        out.push(ch);
+                    }
+                    i = j + open;
                     continue;
                 }
                 let (tex, anchors) = split_math_labels(&tex);
