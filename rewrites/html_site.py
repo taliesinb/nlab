@@ -32,7 +32,8 @@ IMG_RE = re.compile(r'(src=")(files(?:-web)?/)')
 SEARCH_CSS = """<style>
 #search { margin: 0 0 1.5em; }
 #search-input {
-  width: 100%; box-sizing: border-box; font: inherit;
+  width: 100%; box-sizing: border-box;
+  font: 1rem system-ui, sans-serif;
   color: var(--fg); background: var(--bg);
   border: 1px solid var(--rule); border-radius: 6px;
   padding: 0.45em 0.7em; outline: none;
@@ -79,13 +80,17 @@ SEARCH_CSS = """<style>
   padding: 0.12em 0.45em; border-radius: 4px;
 }
 .sr mark { background: none; color: var(--hl-fg); }
-.sr .sr-more a { color: var(--muted); font-size: 0.85rem; }
-#load-more {
-  font: inherit; color: var(--link); background: none;
-  border: 1px solid var(--rule); border-radius: 6px;
-  padding: 0.35em 1em; margin: 0.3em 0 1.5em; cursor: pointer;
+.sr .sr-more td { text-align: center; }
+.sr .sr-more a {
+  color: var(--muted); font-size: 0.8rem;
+  font-family: system-ui, sans-serif;
 }
-#load-more:hover { border-color: var(--link); }
+#load-more {
+  display: block; margin: 0.5em auto 1.5em; padding: 0.35em 1em;
+  font: 0.8rem system-ui, sans-serif; color: var(--muted);
+  background: none; border: none; cursor: pointer;
+}
+#load-more:hover { color: var(--fg); }
 </style>"""
 
 
@@ -124,17 +129,21 @@ function win(e) {
 }
 function render(d) {
   const subs = (d.sub_results || []).filter(s => s.excerpt && s.url.includes('#'));
-  let rows = subs.slice(0, 3).map(s =>
-    `<tr><td class="t"><span class="sr-lvl">${(s.anchor?.element)||''}</span>` +
-    `<a href="${s.url}">${hi(secname(s.title))}</a></td>` +
-    `<td class="s">${win(s.excerpt)}</td></tr>`).join('');
+  const items = subs.slice(0, 3).map(s => ({
+    lvl: (s.anchor?.element) || '', title: secname(s.title),
+    url: s.url, ex: s.excerpt,
+  }));
+  if (!items.length && d.excerpt) {
+    items.push({ lvl: 'body', title: '', url: d.url, ex: d.excerpt });
+  }
+  let rows = items.map(r =>
+    `<tr><td class="t"><span class="sr-lvl">${r.lvl}</span>` +
+    (r.title ? `<a href="${r.url}">${hi(r.title)}</a>` : '') +
+    `</td><td class="s">${win(r.ex)}</td></tr>`).join('');
   if (subs.length > 3) {
     const n = subs.length - 3;
     rows += `<tr class="sr-more"><td colspan="2">` +
-      `<a href="${d.url}">${n} more ${n === 1 ? 'match' : 'matches'}\\u2026</a></td></tr>`;
-  }
-  if (!rows && d.excerpt) {
-    rows = `<tr><td class="s" colspan="2">${win(d.excerpt)}</td></tr>`;
+      `<a href="${d.url}">show ${n} more ${n === 1 ? 'match' : 'matches'}\u2026</a></td></tr>`;
   }
   const tbl = rows ? `<table><colgroup><col class="c-t"><col></colgroup>${rows}</table>` : '';
   return `<div class="sr"><a class="sr-page" href="${d.url}">${hi(d.meta.title)}</a>${tbl}</div>`;
@@ -146,7 +155,7 @@ async function draw(my) {
   let html = datas.map(render).join('') || '<p>no results</p>';
   if (shown < results.length) {
     const hi2 = Math.min(shown + 15, results.length);
-    html += `<button id="load-more">load ${shown + 1}\\u2013${hi2} of ${results.length}</button>`;
+    html += `<button id="load-more">show matches ${shown + 1}\\u2013${hi2} of ${results.length}</button>`;
   }
   out.innerHTML = html;
   cnt.textContent = `${Math.min(shown, results.length)} of ${results.length} result${results.length === 1 ? '' : 's'}`;
@@ -243,8 +252,6 @@ def main():
         text = p.read_text(errors="replace")
         text = LINK_RE.sub(relink, text)
         text = IMG_RE.sub(r"\1../\2", text)
-        text = text.replace("</head>", search_head("../") + "</head>", 1)
-        text = text.replace("<body>", "<body>" + search_body("../"), 1)
         # navigation pages (tables of contents) are link lists that
         # would out-rank real articles for common terms
         if names.get(pid, "").endswith("contents"):

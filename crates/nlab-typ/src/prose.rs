@@ -1504,6 +1504,35 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .replace_all(&src, "$1**$2** ")
         .to_string();
     let src = extract_wiki(&src, &mut stash);
+    // markdown footnotes: [^name] references with [^name]: definitions
+    // (cmark would need ENABLE_FOOTNOTES; inlining as typst #footnote
+    // is simpler and keeps definitions next to their references).
+    // Runs after wiki/math extraction so definition bodies hold stash
+    // placeholders, which resolve at the end like everything else.
+    let mut footnotes: std::collections::HashMap<String, String> =
+        Default::default();
+    let src = regex::Regex::new(r"(?m)^\[\^([^\]\n]+)\]:[ \t]*((?:.+\n?)+?)(?:\n\s*\n|\z)")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            footnotes.insert(
+                c[1].to_string(),
+                c[2].trim().replace('\n', " "),
+            );
+            String::new()
+        })
+        .to_string();
+    let src = regex::Regex::new(r"\[\^([^\]\n]+)\]")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            match footnotes.get(&c[1]) {
+                Some(def) => stash.put_src(
+                    format!("#footnote[{}]", escape_typst(def)),
+                    c[0].to_string(),
+                ),
+                None => String::new(),
+            }
+        })
+        .to_string();
     // \ref{Id}: Maruku turns these into numbered links to environment
     // anchors (the live site fills the number with JavaScript; we query
     // the env's metadata statically).
