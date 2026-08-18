@@ -9,3 +9,6 @@ rewrites/bin/
 crates/*/target/
 .claude/
 .zed/
+
+# Local Netlify folder
+.netlify
