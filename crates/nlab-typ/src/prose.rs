@@ -17,12 +17,32 @@ const P1: char = '\u{E001}';
 
 pub(crate) struct Stash {
     items: Vec<String>, // resolved typst fragments
+    srcs: Vec<String>,  // original source, restored inside code contexts
 }
 
 impl Stash {
     fn put(&mut self, typst: String) -> String {
         self.items.push(typst);
+        self.srcs.push(String::new());
         format!("{}{}{}", P0, self.items.len() - 1, P1)
+    }
+    fn put_src(&mut self, typst: String, src: String) -> String {
+        self.items.push(typst);
+        self.srcs.push(src);
+        format!("{}{}{}", P0, self.items.len() - 1, P1)
+    }
+    /// Placeholders back to their source text (code spans/blocks).
+    fn unstash(&self, text: &str) -> String {
+        let re = regex::Regex::new(&format!("{}(\\d+){}", P0, P1)).unwrap();
+        re.replace_all(text, |c: &regex::Captures| {
+            let i: usize = c[1].parse().unwrap();
+            if self.srcs[i].is_empty() {
+                self.items[i].clone()
+            } else {
+                self.srcs[i].clone()
+            }
+        })
+        .to_string()
     }
 }
 
@@ -98,10 +118,13 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
                     i = j + open;
                     continue;
                 }
+                let delim = if display { "$$" } else { "$" };
+                let src_frag = format!("{}{}{}", delim, tex, delim);
                 let (tex, anchors) = split_math_labels(&tex);
-                out.push_str(
-                    &stash.put(format!("{}{}", math_to_typst(&tex, display), anchors)),
-                );
+                out.push_str(&stash.put_src(
+                    format!("{}{}", math_to_typst(&tex, display), anchors),
+                    src_frag,
+                ));
                 i = j + open;
                 continue;
             }
@@ -303,6 +326,7 @@ fn extract_wiki(src: &str, stash: &mut Stash) -> String {
     let re = regex::Regex::new(r"\[\[([^\[\]]+)\]\]").unwrap();
     re.replace_all(&src, |c: &regex::Captures| {
         let inner = &c[1];
+        let whole = c[0].to_string();
         if let Some(rest) = inner.strip_prefix('!') {
             // directives: skip includes/redirects in the page body
             let _ = rest;
@@ -315,24 +339,24 @@ fn extract_wiki(src: &str, stash: &mut Stash) -> String {
         // [[Name.pdf:file]] links to an uploaded file, not a wiki page
         if let Some(file) = target.strip_suffix(":file") {
             let text = text.strip_suffix(":file").unwrap_or(text);
-            return stash.put(format!(
+            return stash.put_src(format!(
                 "#link(\"https://ncatlab.org/nlab/files/{}\")[{}];",
                 file.trim().replace(' ', "+"),
                 escape_typst(text)
-            ));
+            ), whole.clone());
         }
         if let Some(id) = page_index().get(&target.trim().to_lowercase()) {
-            return stash.put(format!(
+            return stash.put_src(format!(
                 "#nlab-page(\"{}\")[{}];",
                 id,
                 escape_typst(text)
-            ));
+            ), whole.clone());
         }
-        stash.put(format!(
+        stash.put_src(format!(
             "#link(\"{}\")[{}];",
             wiki_target_url(target),
             escape_typst(text)
-        ))
+        ), whole.clone())
     })
     .to_string()
 }
@@ -524,13 +548,14 @@ fn heading_eq(level: HeadingLevel) -> usize {
     }
 }
 
-fn markdown_to_typst(src: &str) -> String {
+fn markdown_to_typst(src: &str, stash: &Stash) -> String {
     let parser = Parser::new_ext(src, Options::ENABLE_TABLES);
     let mut out = String::new();
     let mut skip_heading = false; // h6 titles inside envs are dropped
     let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut item_depth = 0usize;
     let mut link_semi: Vec<bool> = Vec::new();
+    let mut in_code = false;
     for ev in parser {
         match ev {
             Event::Start(Tag::Heading { level, .. }) => {
@@ -640,13 +665,23 @@ fn markdown_to_typst(src: &str) -> String {
                     out.push(';');
                 }
             }
-            Event::Start(Tag::CodeBlock(_)) => out.push_str("\n```\n"),
-            Event::End(TagEnd::CodeBlock) => out.push_str("\n```\n"),
+            Event::Start(Tag::CodeBlock(_)) => {
+                in_code = true;
+                out.push_str("\n```\n");
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code = false;
+                out.push_str("\n```\n");
+            }
             Event::Code(c) => {
-                out.push_str(&format!("`{}`", c));
+                out.push_str(&format!("`{}`", stash.unstash(&c)));
             }
             Event::Text(t) => {
-                if !skip_heading {
+                if in_code {
+                    // fence content is verbatim: no typst escapes, and
+                    // placeholders revert to their source text
+                    out.push_str(&stash.unstash(&t));
+                } else if !skip_heading {
                     out.push_str(&escape_typst(&t));
                 }
             }
@@ -932,12 +967,48 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 "##;
 
 pub(crate) fn page_to_typst(src: &str, title: Option<&str>) -> String {
-    let mut stash = Stash { items: Vec::new() };
+    let mut stash = Stash { items: Vec::new(), srcs: Vec::new() };
     // windows-1252 mojibake control chars can't encode in HTML
     let src: String = src
         .chars()
         .filter(|c| !('\u{80}'..='\u{9F}').contains(c))
         .collect();
+    let src = src.as_str();
+    let src = src.to_string();
+    // Instiki <nowiki> spans are fully verbatim
+    let src = regex::Regex::new(r"(?s)<nowiki>(.*?)</nowiki>")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            stash.put_src(format!("#raw({:?})", &c[1]), c[1].to_string())
+        })
+        .to_string();
+    // code spans and fences are verbatim: stash them BEFORE the wiki /
+    // math extractors, which would otherwise convert `[[x]]` or `$y$`
+    // written inside backticks as markup examples
+    let src = regex::Regex::new(r"(?ms)^```([A-Za-z]*)[ \t]*\n(.*?)^```[ \t]*$")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            let lang = if c[1].is_empty() {
+                String::new()
+            } else {
+                format!(", lang: \"{}\"", &c[1])
+            };
+            stash.put_src(
+                format!(
+                    "#block(fill: luma(96%), inset: 8pt, radius: 4pt, width: 100%)[#raw({:?}{})]",
+                    c[2].trim_end(),
+                    lang
+                ),
+                c[0].to_string(),
+            )
+        })
+        .to_string();
+    let src = regex::Regex::new(r"`([^`\n]+)`")
+        .unwrap()
+        .replace_all(&src, |c: &regex::Captures| {
+            stash.put_src(format!("#raw({:?})", &c[1]), c[0].to_string())
+        })
+        .to_string();
     let src = src.as_str();
     // strip trailing metadata lines
     let src: String = src
@@ -1127,13 +1198,17 @@ terminology|notn|notation|conjecture|assumption|exercise";
                 .captures(body)
                 .map(|m| m[1].to_string());
             match name {
-                Some(n) if files_root().join(&n).exists() => {
-                    stash.put(format!("#nlab-image(\"files/{}\")", n))
-                }
-                Some(n) => stash.put(format!(
-                    "#link(\"https://ncatlab.org/nlab/files/{}\")[(figure)];",
-                    n.replace(' ', "+")
-                )),
+                Some(n) if files_root().join(&n).exists() => stash.put_src(
+                    format!("#nlab-image(\"files/{}\")", n),
+                    c[0].to_string(),
+                ),
+                Some(n) => stash.put_src(
+                    format!(
+                        "#link(\"https://ncatlab.org/nlab/files/{}\")[(figure)];",
+                        n.replace(' ', "+")
+                    ),
+                    c[0].to_string(),
+                ),
                 None => String::new(),
             }
         })
@@ -1471,7 +1546,14 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .replace_all(&src, |c: &regex::Captures| {
             // `[text]({#Id})` is a LINK to the anchor, not the anchor
             if seen_anchors.insert(c[2].to_string()) {
-                format!("{}{}", &c[1], stash.put(format!("#metadata(none)#label(\"{}\")", &c[2])))
+                format!(
+                    "{}{}",
+                    &c[1],
+                    stash.put_src(
+                        format!("#metadata(none)#label(\"{}\")", &c[2]),
+                        format!("{{#{}}}", &c[2]),
+                    )
+                )
             } else {
                 c[1].to_string()
             }
@@ -1509,7 +1591,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
         }
         out.join("\n")
     };
-    let body = markdown_to_typst(&src);
+    let body = markdown_to_typst(&src, &stash);
     // resolve placeholders (escape pass never touches PUA chars); a
     // literal ( or [ right after a #call() would chain as another
     // argument list, so terminate the expression with `;` first

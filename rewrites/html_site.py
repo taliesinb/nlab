@@ -38,25 +38,54 @@ SEARCH_CSS = """<style>
   padding: 0.45em 0.7em; outline: none;
 }
 #search-input:focus { border-color: var(--link); }
+#search-box { position: relative; margin-bottom: 1.2em; }
+.search-hdr {
+  display: flex; align-items: center; gap: 1.2em; margin: 0.6em 0 1.2em;
+}
+.search-hdr h1 {
+  margin: 0; padding: 0; border: none; font-size: 1.5rem; white-space: nowrap;
+}
+.search-hdr #search-box { flex: 1; margin-bottom: 0; }
+#search-count {
+  position: absolute; right: 3em; top: 50%; transform: translateY(-50%);
+  color: var(--muted); font-size: 0.8rem; pointer-events: none;
+  font-family: system-ui, sans-serif;
+}
 :root { --hl-fg: #b35c00; --chip: rgba(0,0,0,0.06); }
 @media (prefers-color-scheme: dark) {
   :root { --hl-fg: #e8963f; --chip: rgba(255,255,255,0.07); }
 }
 .sr { border-bottom: 1px solid var(--rule); padding: 0 0 10px; margin: 0 0 10px; }
-.sr-page { font-weight: 700; font-size: 1.1rem; display: block; margin-bottom: 0.15em; }
-.sr-match {
-  display: flex; flex-wrap: wrap; align-items: baseline;
-  justify-content: space-between; column-gap: 1em;
-  margin: 0.1em 0 0 1.25em;
+.sr-page { font-weight: 700; font-size: 1.25rem; display: block; margin-bottom: 0.4em; }
+.sr table {
+  border-collapse: separate; border-spacing: 0 0.3em;
+  table-layout: fixed; width: 100%;
+  margin: -0.15em 0 0 0;
 }
-.sr-sec { white-space: nowrap; }
-.sr-sec::before { content: "# "; color: var(--muted); margin-left: -1.25em; }
-.sr-snip {
-  margin: 0 -0.45em; font-size: 0.85rem;
+.sr col.c-t { width: 32ch; }
+.sr td {
+  padding: 0.12em 0.5em 0.12em 0; vertical-align: baseline;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sr td.t a { color: var(--fg); font-weight: 400; font-size: 0.95rem; }
+.sr .sr-lvl {
+  color: var(--muted); font-size: 0.7rem; font-family: ui-monospace, monospace;
+  margin-right: 0.45em; text-transform: uppercase;
+}
+.sr td.s {
+  font-size: 0.85rem;
   color: color-mix(in srgb, var(--fg) 72%, var(--bg));
-  background: var(--chip); padding: 0.1em 0.45em; border-radius: 4px;
+  background: var(--chip);
+  padding: 0.12em 0.45em; border-radius: 4px;
 }
-.sr-snip mark { background: none; color: var(--hl-fg); }
+.sr mark { background: none; color: var(--hl-fg); }
+.sr .sr-more a { color: var(--muted); font-size: 0.85rem; }
+#load-more {
+  font: inherit; color: var(--link); background: none;
+  border: 1px solid var(--rule); border-radius: 6px;
+  padding: 0.35em 1em; margin: 0.3em 0 1.5em; cursor: pointer;
+}
+#load-more:hover { border-color: var(--link); }
 </style>"""
 
 
@@ -65,47 +94,93 @@ def search_head(rel: str, wide: bool = False) -> str:
     return SEARCH_CSS + extra
 
 
-def search_body(rel: str, autofocus: bool = False) -> str:
+def search_body(rel: str, autofocus: bool = False, header: bool = False) -> str:
     af = " autofocus" if autofocus else ""
+    js = """
+const pf = await import("IMPORTPATH");
+await pf.options({excerptLength: 45});
+pf.init();
+const inp = document.getElementById('search-input');
+const out = document.getElementById('search-results');
+const cnt = document.getElementById('search-count');
+const esc = t => t.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+const secname = t => t.replace(/^[\\d.\\u00a0 ]+/, '');
+let terms = [];
+function hi(t) {
+  let h = esc(t);
+  if (terms.length) {
+    const re = new RegExp('(' + terms.join('|') + ')', 'gi');
+    h = h.replace(re, '<mark>$1</mark>');
+  }
+  return h;
+}
+function win(e) {
+  const i = e.indexOf('<mark>');
+  if (i > 60) {
+    const cut = e.lastIndexOf(' ', i - 60);
+    if (cut > 0) e = '\\u2026' + e.slice(cut + 1);
+  }
+  return e;
+}
+function render(d) {
+  const subs = (d.sub_results || []).filter(s => s.excerpt && s.url.includes('#'));
+  let rows = subs.slice(0, 3).map(s =>
+    `<tr><td class="t"><span class="sr-lvl">${(s.anchor?.element)||''}</span>` +
+    `<a href="${s.url}">${hi(secname(s.title))}</a></td>` +
+    `<td class="s">${win(s.excerpt)}</td></tr>`).join('');
+  if (subs.length > 3) {
+    const n = subs.length - 3;
+    rows += `<tr class="sr-more"><td colspan="2">` +
+      `<a href="${d.url}">${n} more ${n === 1 ? 'match' : 'matches'}\\u2026</a></td></tr>`;
+  }
+  if (!rows && d.excerpt) {
+    rows = `<tr><td class="s" colspan="2">${win(d.excerpt)}</td></tr>`;
+  }
+  const tbl = rows ? `<table><colgroup><col class="c-t"><col></colgroup>${rows}</table>` : '';
+  return `<div class="sr"><a class="sr-page" href="${d.url}">${hi(d.meta.title)}</a>${tbl}</div>`;
+}
+let seq = 0, results = [], shown = 0;
+async function draw(my) {
+  const datas = await Promise.all(results.slice(0, shown).map(r => r.data()));
+  if (my !== seq) return;
+  let html = datas.map(render).join('') || '<p>no results</p>';
+  if (shown < results.length) {
+    const hi2 = Math.min(shown + 15, results.length);
+    html += `<button id="load-more">load ${shown + 1}\\u2013${hi2} of ${results.length}</button>`;
+  }
+  out.innerHTML = html;
+  cnt.textContent = `${Math.min(shown, results.length)} of ${results.length} result${results.length === 1 ? '' : 's'}`;
+  document.getElementById('load-more')?.addEventListener('click', () => {
+    shown += 15; draw(seq);
+  });
+}
+async function run(q) {
+  const my = ++seq;
+  if (!q) { out.innerHTML = ''; cnt.textContent = ''; return; }
+  const search = await pf.debouncedSearch(q, {}, 200);
+  if (!search || my !== seq) return;
+  terms = q.split(/\\s+/).filter(w => w.length > 1)
+    .map(w => esc(w).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));
+  results = search.results;
+  shown = 15;
+  draw(my);
+}
+inp.addEventListener('input', () => run(inp.value.trim()));
+const q0 = new URLSearchParams(location.search).get('q');
+if (q0) { inp.value = q0; run(q0); }
+"""
+    js = js.replace("IMPORTPATH", (rel or "./") + "pagefind/pagefind.js")
+    box = (
+        f'<div id="search-box"><input id="search-input" '
+        f'type="search" placeholder="Search the nLab"{af}>'
+        f'<span id="search-count"></span></div>'
+    )
+    if header:
+        box = f'<div class="search-hdr"><h1>nLab</h1>{box}</div>'
     return (
-        f'<div id="search"><input id="search-input" type="search" '
-        f'placeholder="Search the nLab"{af}><div id="search-results"></div></div>'
-        '<script type="module">'
-        f'const pf = await import("{rel or "./"}pagefind/pagefind.js");'
-        "await pf.options({excerptLength: 20});"
-        "pf.init();"
-        "const inp = document.getElementById('search-input');"
-        "const out = document.getElementById('search-results');"
-        "const esc = t => t.replace(/[&<>\"]/g, c => "
-        "({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'})[c]);"
-        "const secname = t => esc(t.replace(/^[\\d.\u00a0 ]+/, ''));"
-        "function render(d) {"
-        "  const subs = (d.sub_results || [])"
-        "    .filter(s => s.excerpt && s.url.includes('#'))"
-        "    .slice(0, 4)"
-        "    .map(s => `<div class=\"sr-match\"><a class=\"sr-sec\" "
-        "href=\"${s.url}\">${secname(s.title)}</a>"
-        "<span class=\"sr-snip\">${s.excerpt}</span></div>`)"
-        "    .join('');"
-        "  return `<div class=\"sr\"><a class=\"sr-page\" "
-        "href=\"${d.url}\">${esc(d.meta.title)}</a>${subs}</div>`;"
-        "}"
-        "let seq = 0;"
-        "async function run(q) {"
-        "  const my = ++seq;"
-        "  if (!q) { out.innerHTML = ''; return; }"
-        "  const search = await pf.debouncedSearch(q, {}, 200);"
-        "  if (!search || my !== seq) return;"
-        "  const datas = await Promise.all("
-        "    search.results.slice(0, 15).map(r => r.data()));"
-        "  if (my !== seq) return;"
-        "  out.innerHTML = datas.map(render).join('') ||"
-        "    '<p class=\"sr-none\">no results</p>';"
-        "}"
-        "inp.addEventListener('input', () => run(inp.value.trim()));"
-        "const q0 = new URLSearchParams(location.search).get('q');"
-        "if (q0) { inp.value = q0; run(q0); }"
-        "</script>"
+        f'<div id="search">{box}'
+        f'<div id="search-results"></div></div>'
+        f'<script type="module">{js}</script>'
     )
 
 
@@ -170,6 +245,11 @@ def main():
         text = IMG_RE.sub(r"\1../\2", text)
         text = text.replace("</head>", search_head("../") + "</head>", 1)
         text = text.replace("<body>", "<body>" + search_body("../"), 1)
+        # navigation pages (tables of contents) are link lists that
+        # would out-rank real articles for common terms
+        if names.get(pid, "").endswith("contents"):
+            text = text.replace(
+                "<body>", '<body data-pagefind-weight="0.1">', 1)
         (d / "index.html").write_text(text)
 
     # prune slugs from earlier runs
@@ -197,8 +277,8 @@ def main():
         '<link rel="stylesheet" href="assets/typst.css">'
         '<link rel="stylesheet" href="assets/nlab-typst.css">'
         + search_head("", wide=True)
-        + "</head><body><h1>nLab</h1>"
-        + search_body("", autofocus=True)
+        + "</head><body>"
+        + search_body("", autofocus=True, header=True)
         + "</body></html>"
     )
     (out / "index.html").unlink(missing_ok=True)
