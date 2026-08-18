@@ -135,14 +135,30 @@ function win(e) {
 const unesc = t => t.replace(/&(amp|lt|gt|quot|#39);/g,
   (_, e) => ({amp:'&', lt:'<', gt:'>', quot:'"', '#39':"'"})[e]);
 function fragurl(url, ex) {
-  const mm = /<mark>(.*?)<\/mark>/.exec(ex);
+  const mm = /<mark>(.*?)<\\/mark>/.exec(ex);
   if (!mm) return url;
   const target = unesc(mm[1]).trim();
-  const before = unesc(ex.slice(0, mm.index).replace(/<[^>]+>/g, ''))
-    .replace(/^\u2026/, '').trim();
-  const pre = before.split(/\s+/).slice(-4).join(' ');
-  const frag = (pre ? encodeURIComponent(pre) + '-,' : '') +
-    encodeURIComponent(target);
+  // walk outward from the match, stopping just inside the first
+  // punctuation: the excerpt is stitched from separate blocks, so a
+  // context that crosses a boundary would never match on the page
+  const stops = /[.,;:!?()\\[\\]"\\u{201c}\\u{201d}\\u{2018}\\u{2019}\\u{2026}\\u{2014}|]/u;
+  const before = unesc(ex.slice(0, mm.index).replace(/<[^>]+>/g, ''));
+  const after = unesc(ex.slice(mm.index + mm[0].length).replace(/<[^>]+>/g, ''));
+  let pre = '';
+  for (let i = before.length - 1; i >= 0 && before.length - i < 40; i--) {
+    if (stops.test(before[i])) break;
+    pre = before[i] + pre;
+  }
+  pre = pre.trim();
+  let suf = '';
+  for (let i = 0; i < after.length && i < 40; i++) {
+    if (stops.test(after[i])) break;
+    suf += after[i];
+  }
+  suf = suf.trim();
+  let frag = encodeURIComponent(target);
+  if (pre) frag = encodeURIComponent(pre) + '-,' + frag;
+  if (suf) frag = frag + ',-' + encodeURIComponent(suf);
   return url + (url.includes('#') ? ':~:text=' : '#:~:text=') + frag;
 }
 function render(d) {
