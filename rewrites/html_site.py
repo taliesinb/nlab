@@ -80,6 +80,11 @@ SEARCH_CSS = """<style>
   padding: 0.12em 0.45em; border-radius: 4px;
 }
 .sr mark { background: none; color: var(--hl-fg); }
+.sr td.s a.sniplink {
+  display: block; color: inherit; text-decoration: none; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sr td.s a.sniplink:hover { text-decoration: none; }
 .sr .sr-more td { text-align: center; }
 .sr .sr-more a {
   color: var(--muted); font-size: 0.8rem;
@@ -127,6 +132,19 @@ function win(e) {
   }
   return e;
 }
+const unesc = t => t.replace(/&(amp|lt|gt|quot|#39);/g,
+  (_, e) => ({amp:'&', lt:'<', gt:'>', quot:'"', '#39':"'"})[e]);
+function fragurl(url, ex) {
+  const mm = /<mark>(.*?)<\/mark>/.exec(ex);
+  if (!mm) return url;
+  const target = unesc(mm[1]).trim();
+  const before = unesc(ex.slice(0, mm.index).replace(/<[^>]+>/g, ''))
+    .replace(/^\u2026/, '').trim();
+  const pre = before.split(/\s+/).slice(-4).join(' ');
+  const frag = (pre ? encodeURIComponent(pre) + '-,' : '') +
+    encodeURIComponent(target);
+  return url + (url.includes('#') ? ':~:text=' : '#:~:text=') + frag;
+}
 function render(d) {
   const subs = (d.sub_results || []).filter(s => s.excerpt && s.url.includes('#'));
   const items = subs.slice(0, 3).map(s => ({
@@ -136,10 +154,12 @@ function render(d) {
   if (!items.length && d.excerpt) {
     items.push({ lvl: 'body', title: '', url: d.url, ex: d.excerpt });
   }
-  let rows = items.map(r =>
-    `<tr><td class="t"><span class="sr-lvl">${r.lvl}</span>` +
-    (r.title ? `<a href="${r.url}">${hi(r.title)}</a>` : '') +
-    `</td><td class="s">${win(r.ex)}</td></tr>`).join('');
+  let rows = items.map(r => {
+    const ex = win(r.ex);
+    return `<tr><td class="t"><span class="sr-lvl">${r.lvl}</span>` +
+      (r.title ? `<a href="${r.url}">${hi(r.title)}</a>` : '') +
+      `</td><td class="s"><a class="sniplink" href="${fragurl(r.url, ex)}">${ex}</a></td></tr>`;
+  }).join('');
   if (subs.length > 3) {
     const n = subs.length - 3;
     rows += `<tr class="sr-more"><td colspan="2">` +
