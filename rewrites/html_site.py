@@ -217,7 +217,8 @@ if (q0) { inp.value = q0; run(q0); }
     js = js.replace("IMPORTPATH", (rel or "./") + "pagefind/pagefind.js")
     box = (
         f'<div id="search-box"><input id="search-input" '
-        f'type="search" placeholder="Search the nLab"{af}>'
+        f'type="search" placeholder="Search the nLab" '
+        f'spellcheck="false" autocorrect="off" autocapitalize="off"{af}>'
         f'<span id="search-count"></span></div>'
     )
     if header:
