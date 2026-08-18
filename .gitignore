@@ -7,3 +7,5 @@ rewrites/*.db
 rewrites/out/
 rewrites/bin/
 crates/*/target/
+.claude/
+.zed/
