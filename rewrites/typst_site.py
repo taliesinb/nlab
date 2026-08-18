@@ -40,6 +40,16 @@ def load_names() -> dict[str, str]:
     return names
 
 
+def skip_page(name: str) -> bool:
+    """Pages the docset also keeps out of search: archived history
+    subpages, blanked placeholders, sandboxes."""
+    return (
+        name.endswith(" > history")
+        or bool(re.fullmatch(r"empty ?\d+", name))
+        or "sandbox" in name.lower()
+    )
+
+
 def markup_escape(t: str) -> str:
     return re.sub(r"([\\#$\[\]*_`<>@])", r"\\\1", t)
 
@@ -106,7 +116,11 @@ def main():
     # assign every slug first so cross-links can resolve forward
     taken: dict[str, str] = {}
     slug_of: dict[str, str] = {}
-    pages = sorted(SRC.glob("*.typ"), key=lambda p: int(p.stem))
+    pages = sorted(
+        (p for p in SRC.glob("*.typ")
+         if not skip_page(names.get(p.stem, ""))),
+        key=lambda p: int(p.stem),
+    )
     # exact-name pages claim their slug first, so a mangled name
     # ("(-2)-category") can never steal "2-category" from the real one
     def exactness(pid: str) -> int:

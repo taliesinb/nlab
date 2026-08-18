@@ -18,7 +18,7 @@ import shutil
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from typst_site import load_names, slugify  # noqa: E402
+from typst_site import load_names, skip_page, slugify  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "build/typ-pages"
@@ -132,7 +132,11 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     names = load_names()
-    pages = sorted(SRC.glob("*.html"), key=lambda p: int(p.stem))
+    pages = sorted(
+        (p for p in SRC.glob("*.html")
+         if not skip_page(names.get(p.stem, ""))),
+        key=lambda p: int(p.stem),
+    )
 
     # slug assignment identical to the typst site (exact names first)
     taken: dict[str, str] = {}
