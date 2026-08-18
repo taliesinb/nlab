@@ -41,6 +41,25 @@ ul, ol { padding-left: 1.6em; }
 li { margin: 0.3em 0; }
 img, svg { max-width: 100%; height: auto; }
 figure { margin: 1em auto; text-align: center; }
+pre {
+  background: color-mix(in srgb, var(--fg) 7%, var(--bg));
+  padding: 0.7em 0.9em;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+code {
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--fg) 7%, var(--bg));
+  padding: 0.08em 0.3em;
+  border-radius: 3px;
+}
+pre code { font-size: inherit; background: none; padding: 0; border-radius: 0; }
+@media (prefers-color-scheme: dark) {
+  /* typst's raw highlighting uses a light-theme palette; soften it */
+  pre span[style*="color"] { filter: brightness(1.5) saturate(0.7); }
+}
 figcaption { font-size: 0.88em; color: var(--muted); }
 blockquote {
   margin: 0.5em 0;
