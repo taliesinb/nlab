@@ -32,7 +32,16 @@ SEARCH_VARS = (
     "<style>#search{margin:0 0 1.5em}"
     ":root{--pagefind-ui-scale:.85;--pagefind-ui-primary:var(--link);"
     "--pagefind-ui-text:var(--fg);--pagefind-ui-background:var(--bg);"
-    "--pagefind-ui-border:var(--rule);--pagefind-ui-tag:var(--rule)}"
+    "--pagefind-ui-border:var(--rule);--pagefind-ui-tag:var(--rule);"
+    "--hl-bg:#f6c47a}"
+    "@media (prefers-color-scheme: dark){:root{--hl-bg:#8a4a00}}"
+    # result titles follow the link color
+    ".pagefind-ui__result-link{color:var(--link)}"
+    # the page-level excerpt duplicates the per-section sub-results
+    ".pagefind-ui__result-inner>.pagefind-ui__result-excerpt{display:none}"
+    # match highlight: normal text on dark orange, not yellow-on-black
+    ".pagefind-ui__result-excerpt mark{background:var(--hl-bg);"
+    "color:var(--fg);border-radius:2px}"
     "</style>"
 )
 
