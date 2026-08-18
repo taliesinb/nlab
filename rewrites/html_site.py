@@ -26,41 +26,85 @@ SRC = ROOT / "build/typ-pages"
 LINK_RE = re.compile(r'href="(\d+)\.html(#[^"]*)?"')
 IMG_RE = re.compile(r'(src=")(files(?:-web)?/)')
 
-# pagefind search UI, injected into every page (rel is "../" on page
-# dirs, "" on the root index)
-SEARCH_VARS = (
-    "<style>#search{margin:0 0 1.5em}"
-    ":root{--pagefind-ui-scale:.85;--pagefind-ui-primary:var(--link);"
-    "--pagefind-ui-text:var(--fg);--pagefind-ui-background:var(--bg);"
-    "--pagefind-ui-border:var(--rule);--pagefind-ui-tag:var(--rule);"
-    "--hl-bg:#f6c47a}"
-    "@media (prefers-color-scheme: dark){:root{--hl-bg:#8a4a00}}"
-    # result titles follow the link color
-    ".pagefind-ui__result-link{color:var(--link)}"
-    # empty page-level excerpts (processResult) still render a <p>
-    ".pagefind-ui__result-excerpt:empty{display:none}"
-    # match highlight: normal text on dark orange, not yellow-on-black
-    ".pagefind-ui__result-excerpt mark{background:var(--hl-bg);"
-    "color:var(--fg);border-radius:2px}"
-    "</style>"
-)
+# custom search UI over pagefind.js (no pagefind-ui): the exact
+# markup/css iterated in search-sample.html. rel is "../" on page
+# dirs, "" on the root search page.
+SEARCH_CSS = """<style>
+#search { margin: 0 0 1.5em; }
+#search-input {
+  width: 100%; box-sizing: border-box; font: inherit;
+  color: var(--fg); background: var(--bg);
+  border: 1px solid var(--rule); border-radius: 6px;
+  padding: 0.45em 0.7em; outline: none;
+}
+#search-input:focus { border-color: var(--link); }
+:root { --hl-fg: #b35c00; --chip: rgba(0,0,0,0.06); }
+@media (prefers-color-scheme: dark) {
+  :root { --hl-fg: #e8963f; --chip: rgba(255,255,255,0.07); }
+}
+.sr { border-bottom: 1px solid var(--rule); padding: 0 0 10px; margin: 0 0 10px; }
+.sr-page { font-weight: 700; font-size: 1.1rem; display: block; margin-bottom: 0.15em; }
+.sr-match {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  justify-content: space-between; column-gap: 1em;
+  margin: 0.1em 0 0 1.25em;
+}
+.sr-sec { white-space: nowrap; }
+.sr-sec::before { content: "# "; color: var(--muted); margin-left: -1.25em; }
+.sr-snip {
+  margin: 0 -0.45em; font-size: 0.85rem;
+  color: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  background: var(--chip); padding: 0.1em 0.45em; border-radius: 4px;
+}
+.sr-snip mark { background: none; color: var(--hl-fg); }
+</style>"""
 
 
-def search_head(rel: str) -> str:
+def search_head(rel: str, wide: bool = False) -> str:
+    extra = "<style>body{max-width:940px}</style>" if wide else ""
+    return SEARCH_CSS + extra
+
+
+def search_body(rel: str, autofocus: bool = False) -> str:
+    af = " autofocus" if autofocus else ""
     return (
-        f'<link rel="stylesheet" href="{rel}pagefind/pagefind-ui.css">'
-        f'<script src="{rel}pagefind/pagefind-ui.js"></script>'
-        + SEARCH_VARS
-    )
-
-
-def search_body(rel: str) -> str:
-    return (
-        '<div id="search"></div><script>'
-        "window.addEventListener('DOMContentLoaded',()=>new PagefindUI("
-        f"{{element:'#search',baseUrl:'{rel}',showSubResults:true,showImages:false,"
-        # the page-level excerpt duplicates the per-section sub-results
-        "processResult:(r)=>{r.excerpt='';return r}}));"
+        f'<div id="search"><input id="search-input" type="search" '
+        f'placeholder="Search the nLab"{af}><div id="search-results"></div></div>'
+        '<script type="module">'
+        f'const pf = await import("{rel or "./"}pagefind/pagefind.js");'
+        "await pf.options({excerptLength: 20});"
+        "pf.init();"
+        "const inp = document.getElementById('search-input');"
+        "const out = document.getElementById('search-results');"
+        "const esc = t => t.replace(/[&<>\"]/g, c => "
+        "({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'})[c]);"
+        "const secname = t => esc(t.replace(/^[\\d.\u00a0 ]+/, ''));"
+        "function render(d) {"
+        "  const subs = (d.sub_results || [])"
+        "    .filter(s => s.excerpt && s.url.includes('#'))"
+        "    .slice(0, 4)"
+        "    .map(s => `<div class=\"sr-match\"><a class=\"sr-sec\" "
+        "href=\"${s.url}\">${secname(s.title)}</a>"
+        "<span class=\"sr-snip\">${s.excerpt}</span></div>`)"
+        "    .join('');"
+        "  return `<div class=\"sr\"><a class=\"sr-page\" "
+        "href=\"${d.url}\">${esc(d.meta.title)}</a>${subs}</div>`;"
+        "}"
+        "let seq = 0;"
+        "async function run(q) {"
+        "  const my = ++seq;"
+        "  if (!q) { out.innerHTML = ''; return; }"
+        "  const search = await pf.debouncedSearch(q, {}, 200);"
+        "  if (!search || my !== seq) return;"
+        "  const datas = await Promise.all("
+        "    search.results.slice(0, 15).map(r => r.data()));"
+        "  if (my !== seq) return;"
+        "  out.innerHTML = datas.map(render).join('') ||"
+        "    '<p class=\"sr-none\">no results</p>';"
+        "}"
+        "inp.addEventListener('input', () => run(inp.value.trim()));"
+        "const q0 = new URLSearchParams(location.search).get('q');"
+        "if (q0) { inp.value = q0; run(q0); }"
         "</script>"
     )
 
@@ -148,9 +192,9 @@ def main():
         "<title>nLab</title>"
         '<link rel="stylesheet" href="assets/typst.css">'
         '<link rel="stylesheet" href="assets/nlab-typst.css">'
-        + search_head("")
+        + search_head("", wide=True)
         + "</head><body><h1>nLab</h1>"
-        + search_body("")
+        + search_body("", autofocus=True)
         + "</body></html>"
     )
     (out / "index.html").unlink(missing_ok=True)
