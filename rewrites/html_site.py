@@ -11,7 +11,6 @@ Deploy: netlify deploy --prod --dir dist/html
 """
 
 import argparse
-import html as html_mod
 import os
 import pathlib
 import re
@@ -50,7 +49,7 @@ def search_body(rel: str) -> str:
     return (
         '<div id="search"></div><script>'
         "window.addEventListener('DOMContentLoaded',()=>new PagefindUI("
-        f"{{element:'#search',baseUrl:'{rel}',showSubResults:true}}));"
+        f"{{element:'#search',baseUrl:'{rel}',showSubResults:true,showImages:false}}));"
         "</script>"
     )
 
@@ -132,15 +131,7 @@ def main():
     hardlink_tree(ROOT / "build/nlab-files", out / "files")
     hardlink_tree(ROOT / "build/nlab-files-web", out / "files-web")
 
-    rows = sorted(
-        ((names.get(pid, pid), slug) for slug, pid in taken.items()),
-        key=lambda r: r[0].lower(),
-    )
-    items = "\n".join(
-        f'<li><a href="{slug}/">{html_mod.escape(name)}</a></li>'
-        for name, slug in rows
-    )
-    (out / "index.html").write_text(
+    (out / "search.html").write_text(
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         "<title>nLab</title>"
@@ -149,8 +140,10 @@ def main():
         + search_head("")
         + "</head><body><h1>nLab</h1>"
         + search_body("")
-        + f"<ul>{items}</ul></body></html>"
+        + "</body></html>"
     )
+    (out / "index.html").unlink(missing_ok=True)
+    (out / "_redirects").write_text("/  /search.html  302\n")
     print(f"{len(pages)} pages -> {out}")
 
     if not args.no_search:
