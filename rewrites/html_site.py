@@ -37,8 +37,8 @@ SEARCH_VARS = (
     "@media (prefers-color-scheme: dark){:root{--hl-bg:#8a4a00}}"
     # result titles follow the link color
     ".pagefind-ui__result-link{color:var(--link)}"
-    # the page-level excerpt duplicates the per-section sub-results
-    ".pagefind-ui__result-inner>.pagefind-ui__result-excerpt{display:none}"
+    # empty page-level excerpts (processResult) still render a <p>
+    ".pagefind-ui__result-excerpt:empty{display:none}"
     # match highlight: normal text on dark orange, not yellow-on-black
     ".pagefind-ui__result-excerpt mark{background:var(--hl-bg);"
     "color:var(--fg);border-radius:2px}"
@@ -58,7 +58,9 @@ def search_body(rel: str) -> str:
     return (
         '<div id="search"></div><script>'
         "window.addEventListener('DOMContentLoaded',()=>new PagefindUI("
-        f"{{element:'#search',baseUrl:'{rel}',showSubResults:true,showImages:false}}));"
+        f"{{element:'#search',baseUrl:'{rel}',showSubResults:true,showImages:false,"
+        # the page-level excerpt duplicates the per-section sub-results
+        "processResult:(r)=>{r.excerpt='';return r}}));"
         "</script>"
     )
 
