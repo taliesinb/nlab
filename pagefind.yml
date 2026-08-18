@@ -1,0 +1,7 @@
+# Pagefind config for the static HTML site (dist/html).
+# Diagrams and MathML carry no searchable prose: keep them out.
+site: dist/html
+exclude_selectors:
+  - "svg"
+  - "math"
+  - ".nlab-diagram"

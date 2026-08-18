@@ -27,6 +27,33 @@ SRC = ROOT / "build/typ-pages"
 LINK_RE = re.compile(r'href="(\d+)\.html(#[^"]*)?"')
 IMG_RE = re.compile(r'(src=")(files(?:-web)?/)')
 
+# pagefind search UI, injected into every page (rel is "../" on page
+# dirs, "" on the root index)
+SEARCH_VARS = (
+    "<style>#search{margin:0 0 1.5em}"
+    ":root{--pagefind-ui-scale:.85;--pagefind-ui-primary:var(--link);"
+    "--pagefind-ui-text:var(--fg);--pagefind-ui-background:var(--bg);"
+    "--pagefind-ui-border:var(--rule);--pagefind-ui-tag:var(--rule)}"
+    "</style>"
+)
+
+
+def search_head(rel: str) -> str:
+    return (
+        f'<link rel="stylesheet" href="{rel}pagefind/pagefind-ui.css">'
+        f'<script src="{rel}pagefind/pagefind-ui.js"></script>'
+        + SEARCH_VARS
+    )
+
+
+def search_body(rel: str) -> str:
+    return (
+        '<div id="search"></div><script>'
+        "window.addEventListener('DOMContentLoaded',()=>new PagefindUI("
+        f"{{element:'#search',baseUrl:'{rel}',showSubResults:true}}));"
+        "</script>"
+    )
+
 
 def hardlink_tree(src: pathlib.Path, dst: pathlib.Path):
     for f in src.rglob("*"):
@@ -44,6 +71,8 @@ def hardlink_tree(src: pathlib.Path, dst: pathlib.Path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "dist/html"))
+    ap.add_argument("--no-search", action="store_true",
+                    help="skip the pagefind index build")
     args = ap.parse_args()
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -81,10 +110,12 @@ def main():
         text = p.read_text(errors="replace")
         text = LINK_RE.sub(relink, text)
         text = IMG_RE.sub(r"\1../\2", text)
+        text = text.replace("</head>", search_head("../") + "</head>", 1)
+        text = text.replace("<body>", "<body>" + search_body("../"), 1)
         (d / "index.html").write_text(text)
 
     # prune slugs from earlier runs
-    keep = set(taken) | {"assets", "files", "files-web"}
+    keep = set(taken) | {"assets", "files", "files-web", "pagefind"}
     for old in out.iterdir():
         if old.is_dir() and old.name not in keep:
             shutil.rmtree(old)
@@ -115,9 +146,20 @@ def main():
         "<title>nLab</title>"
         '<link rel="stylesheet" href="assets/typst.css">'
         '<link rel="stylesheet" href="assets/nlab-typst.css">'
-        f"</head><body><h1>nLab</h1><ul>{items}</ul></body></html>"
+        + search_head("")
+        + "</head><body><h1>nLab</h1>"
+        + search_body("")
+        + f"<ul>{items}</ul></body></html>"
     )
     print(f"{len(pages)} pages -> {out}")
+
+    if not args.no_search:
+        import subprocess
+        subprocess.run(
+            ["npx", "-y", "pagefind", "--site", str(out)],
+            check=True,
+            cwd=str(ROOT),
+        )
 
 
 if __name__ == "__main__":
