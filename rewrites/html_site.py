@@ -289,6 +289,11 @@ def main():
         text = p.read_text(errors="replace")
         text = LINK_RE.sub(relink, text)
         text = IMG_RE.sub(r"\1../\2", text)
+        text = text.replace(
+            "</head>",
+            '<script defer src="../assets/nlab.js"></script></head>',
+            1,
+        )
         # navigation pages (tables of contents) are link lists that
         # would out-rank real articles for common terms
         if names.get(pid, "").endswith("contents"):
@@ -307,6 +312,10 @@ def main():
     shutil.copy(
         pathlib.Path(__file__).parent / "docset_shell.css",
         out / "assets" / "nlab-typst.css",
+    )
+    shutil.copy(
+        pathlib.Path(__file__).parent / "nlab.js",
+        out / "assets" / "nlab.js",
     )
     typst_css = ROOT / "build/typ-assets/typst.css"
     if typst_css.exists():
