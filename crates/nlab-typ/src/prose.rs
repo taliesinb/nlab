@@ -521,7 +521,7 @@ fn escape_typst(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         match c {
-            '#' | '*' | '_' | '`' | '$' | '[' | ']' | '<' | '>' | '@' | '\\' | '\'' | '"' => {
+            '#' | '*' | '_' | '`' | '$' | '[' | ']' | '<' | '>' | '@' | '\\' => {
                 out.push('\\');
                 out.push(c);
             }
@@ -1280,7 +1280,7 @@ terminology|notn|notation|conjecture|assumption|exercise";
     .to_string();
     // maruku table-of-contents list item ("* table of contents\n{:toc}",
     // "* automatic toc {: toc}", ...)
-    let src = regex::Regex::new(r"(?m)^\*[^\n{]*\n?\{:\s*toc[^}]*\}\s*$")
+    let src = regex::Regex::new(r"(?m)^[^\n{]*\n?\{:\s*toc[^}]*\}\s*$")
         .unwrap()
         .replace_all(&src, |_: &regex::Captures| {
             stash.put("#outline(depth: 2)".into())
@@ -1291,6 +1291,21 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "$1 $2")
         .to_string();
+    // Maruku closes an unclosed ** at the end of the paragraph
+    let src = src
+        .split("\n\n")
+        .map(|para| {
+            if para.contains("**")
+                && para.matches("**").count() % 2 == 1
+                && !para.trim_start().starts_with("    ")
+            {
+                format!("{}**", para.trim_end())
+            } else {
+                para.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
     // an unclosed ** inside a table cell (author typo) leaves literal
     // stars in the rendered cell; drop the lone marker
     let src = src
@@ -1557,6 +1572,16 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .to_string();
     // an anchor at the end of a heading would ride into the heading
     // body and be duplicated by #outline(); move it below the heading
+    // an IAL trailing a heading line styles it; we have no use for it
+    let src = regex::Regex::new(r"(?m)^(#+[^\n{]*?)\s*#*\s*\{:[^}\n]*\}\s*$")
+        .unwrap()
+        .replace_all(&src, "$1")
+        .to_string();
+    // standalone block IALs ({: style=...} after a table etc.)
+    let src = regex::Regex::new(r"(?m)^\{:[^}\n]*\}\s*$")
+        .unwrap()
+        .replace_all(&src, "")
+        .to_string();
     // Maruku's colon form `{: #Id}` is the same anchor IAL as `{#Id}`
     let src = regex::Regex::new(r"\{:\s*#([\w:-]+)\s*\}")
         .unwrap()
