@@ -1588,6 +1588,37 @@ terminology|notn|notation|conjecture|assumption|exercise";
             }
         })
         .to_string();
+    // Maruku list tolerance: many spaces after a marker are just
+    // spaces ("1.     text"), and an item-continuation paragraph may be
+    // indented 4-7 columns without becoming code (Maruku code inside an
+    // item needs 8). CommonMark measures from the marker, so normalize:
+    // collapse marker spacing and pull 4-7 column continuations to 3.
+    let src = {
+        let marker = regex::Regex::new(r"^([ \t]*)((?:\d+[.)]|[*+-])) {2,}(\S)").unwrap();
+        let mut in_list = false;
+        let mut out: Vec<String> = Vec::new();
+        for line in src.lines() {
+            let mut line = line.to_string();
+            if let Some(c) = marker.captures(&line) {
+                line = format!("{}{} {}{}", &c[1], &c[2], &c[3],
+                    &line[c.get(0).unwrap().end()..]);
+            }
+            let trimmed = line.trim_start_matches(' ');
+            let indent = line.len() - trimmed.len();
+            if !trimmed.is_empty() {
+                if indent == 0 {
+                    in_list = marker.is_match(&line)
+                        || regex::Regex::new(r"^(?:\d+[.)]|[*+-]) ").unwrap().is_match(&line);
+                } else if in_list && (4..=7).contains(&indent)
+                    && !trimmed.starts_with('\u{E000}')
+                {
+                    line = format!("   {}", trimmed);
+                }
+            }
+            out.push(line);
+        }
+        out.join("\n")
+    };
     // a stashed block (diagram, math) whose source line was indented
     // must not become an indented code block under cmark. Dedent to 3
     // spaces — but ONLY outside list items: inside an item the
