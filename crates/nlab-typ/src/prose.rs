@@ -77,7 +77,8 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
             if body.contains("=--") || body.contains("+--") || body.len() > 4000 {
                 return c[0].to_string();
             }
-            let (tex, anchors) = split_math_labels(body);
+            let body = stash.unstash(body);
+            let (tex, anchors) = split_math_labels(&body);
             stash.put(format!("{}{}", math_to_typst(&tex, true), anchors))
         })
         .to_string();
@@ -120,6 +121,7 @@ fn extract_math(src: &str, stash: &mut Stash) -> String {
                 }
                 let delim = if display { "$$" } else { "$" };
                 let src_frag = format!("{}{}{}", delim, tex, delim);
+                let tex = stash.unstash(&tex);
                 let (tex, anchors) = split_math_labels(&tex);
                 out.push_str(&stash.put_src(
                     format!("{}{}", math_to_typst(&tex, display), anchors),
@@ -1159,7 +1161,8 @@ terminology|notn|notation|conjecture|assumption|exercise";
     .unwrap();
     let src = eq_re
         .replace_all(&src, |c: &regex::Captures| {
-            let (tex, anchors) = split_math_labels(&c[1]);
+            let body = stash.unstash(&c[1]);
+            let (tex, anchors) = split_math_labels(&body);
             stash.put(format!("{}{}", math_to_typst(&tex, true), anchors))
         })
         .to_string();
@@ -1291,42 +1294,6 @@ terminology|notn|notation|conjecture|assumption|exercise";
         .unwrap()
         .replace_all(&src, "$1 $2")
         .to_string();
-    // Maruku closes an unclosed ** at the end of the paragraph
-    let src = src
-        .split("\n\n")
-        .map(|para| {
-            if para.contains("**")
-                && para.matches("**").count() % 2 == 1
-                && !para.trim_start().starts_with("    ")
-            {
-                format!("{}**", para.trim_end())
-            } else {
-                para.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    // an unclosed ** inside a table cell (author typo) leaves literal
-    // stars in the rendered cell; drop the lone marker
-    let src = src
-        .lines()
-        .map(|l| {
-            if !l.trim_start().starts_with('|') {
-                return l.to_string();
-            }
-            l.split('|')
-                .map(|seg| {
-                    if seg.matches("**").count() % 2 == 1 {
-                        seg.replacen("**", "", 1)
-                    } else {
-                        seg.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("|")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     // a non-breaking space after ATX hashes is not a heading to cmark
     let src = regex::Regex::new(r"(?m)^(#+)\u{A0}+")
         .unwrap()
@@ -1444,6 +1411,42 @@ terminology|notn|notation|conjecture|assumption|exercise";
     let src = extract_images(&src, &mut stash);
     let src = extract_math(&src, &mut stash);
     let src = extract_fences(&src, &mut stash);
+    // Maruku closes an unclosed ** at the end of the paragraph
+    let src = src
+        .split("\n\n")
+        .map(|para| {
+            if para.contains("**")
+                && para.matches("**").count() % 2 == 1
+                && !para.trim_start().starts_with("    ")
+            {
+                format!("{}**", para.trim_end())
+            } else {
+                para.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    // an unclosed ** inside a table cell (author typo) leaves literal
+    // stars in the rendered cell; drop the lone marker
+    let src = src
+        .lines()
+        .map(|l| {
+            if !l.trim_start().starts_with('|') {
+                return l.to_string();
+            }
+            l.split('|')
+                .map(|seg| {
+                    if seg.matches("**").count() % 2 == 1 {
+                        seg.replacen("**", "", 1)
+                    } else {
+                        seg.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     // stray \label in prose (outside envs and math) becomes an anchor
     let label_re = regex::Regex::new(r"\\label\{([^}\n]+)\}").unwrap();
     let src = label_re
