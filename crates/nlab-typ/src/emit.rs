@@ -637,10 +637,13 @@ fn sig_arrow(cell: &Cell) -> String {
     let sym = sig_sym(cget(cell, "cmd").unwrap_or(""));
     let core = format!("stretch({}, size: #2.4em)", sym);
     let mut attach = Vec::new();
-    if let Some(a) = cget(cell, "above") {
+    // \phantom labels only matched arrow lengths in LaTeX; the fixed
+    // stretch does that here, and the invisible label inflates the row
+    let visible = |l: &str| !l.trim_start().starts_with("\\phantom");
+    if let Some(a) = cget(cell, "above").filter(|l| visible(l)) {
         attach.push(format!("t: #text(0.72em, mi({}))", ts(a)));
     }
-    if let Some(b) = cget(cell, "below") {
+    if let Some(b) = cget(cell, "below").filter(|l| visible(l)) {
         attach.push(format!("b: #text(0.72em, mi({}))", ts(b)));
     }
     if !attach.is_empty() {
@@ -664,7 +667,7 @@ fn emit_signature(rows: &[[Cell; 3]]) -> String {
         ));
     }
     format!(
-        "#grid(\n  columns: 3, column-gutter: 0.4em, row-gutter: 1.1em,\n  align: (right + horizon, center + horizon, left + horizon),\n{}\n)\n",
+        "#grid(\n  columns: 3, column-gutter: 0.4em, row-gutter: 0.8em,\n  align: (right + horizon, center + horizon, left + horizon),\n{}\n)\n",
         cells.join("\n")
     )
 }

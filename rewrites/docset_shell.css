@@ -74,6 +74,7 @@ li blockquote {
 math { font-size: 1.06em; }
 /* browsers leave a tall gap between an overset label and its arrow */
 mover:not([accent]) > :not(:first-child) { margin-bottom: -0.35em; }
+.nlab-diagram { margin: 0.9em 0; }
 .nlab-diagram svg { margin: 0 auto; }
 .nlab-env {
   --acc: var(--link);
