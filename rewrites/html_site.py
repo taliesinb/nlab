@@ -211,7 +211,14 @@ async function run(q) {
   draw(my);
 }
 inp.addEventListener('input', () => run(inp.value.trim()));
-const q0 = new URLSearchParams(location.search).get('q');
+inp.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const q = inp.value.trim();
+    history.replaceState(null, '', q ? '?q=' + encodeURIComponent(q) : location.pathname);
+  }
+});
+const p0 = new URLSearchParams(location.search);
+const q0 = p0.get('q') ?? p0.get('query');
 if (q0) { inp.value = q0; run(q0); }
 """
     js = js.replace("IMPORTPATH", (rel or "./") + "pagefind/pagefind.js")
