@@ -214,6 +214,17 @@ fn translate_labeled_arrows(mut tex: String) -> String {
 
 pub(crate) fn fix_tex(tex: &str) -> String {
     let mut stash: Vec<String> = Vec::new();
+    // an n-ary operator with limits underneath is the big variant
+    // (authors write \underset{i \in I}{\cup} meaning \bigcup)
+    static UNDER_NARY: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"\\underset\{([^{}]*)\}\{\\(cup|cap|vee|wedge|otimes|oplus|sqcup)\}",
+        )
+        .unwrap()
+    });
+    let tex = UNDER_NARY
+        .replace_all(tex, "\\underset{$1}{\\big$2}")
+        .to_string();
     let tex = translate_stacked_pairs(tex.to_string(), &mut stash);
     let tex = translate_underoverset(tex, &mut stash);
     let tex = translate_labeled_arrows(tex);

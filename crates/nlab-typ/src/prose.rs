@@ -872,7 +872,13 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
     body
   })
   if target() == "html" {
-    html.elem("div", attrs: (class: "nlab-diagram"), html.frame(b))
+    // descenders on the last baseline draw below the frame's reported
+    // height (and ascenders above the first): pad the frozen frame
+    html.elem(
+      "div",
+      attrs: (class: "nlab-diagram"),
+      html.frame(block(inset: (top: 0.25em, bottom: 0.45em), b)),
+    )
   } else {
     align(center, b)
   }

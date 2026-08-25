@@ -72,6 +72,8 @@ li blockquote {
   margin: 0.3em 0 0.4em;
 }
 math { font-size: 1.06em; }
+/* browsers leave a tall gap between an overset label and its arrow */
+mover:not([accent]) > :not(:first-child) { margin-bottom: -0.35em; }
 .nlab-diagram svg { margin: 0 auto; }
 .nlab-env {
   --acc: var(--link);
@@ -90,8 +92,8 @@ math { font-size: 1.06em; }
 .nlab-env > :first-child, .nlab-env > p:first-of-type { margin-top: 0; }
 .nlab-env > :last-child { margin-bottom: 0; }
 .nlab-env.nlab-proof { --acc: #6d9ec9; }
-.nlab-env .qed { float: right; margin-top: -1.35em; }
-.nlab-env.nlab-proof::after { content: ""; display: block; clear: both; }
+.nlab-env.nlab-proof { position: relative; padding-right: 1.2em; }
+.nlab-env .qed { position: absolute; right: 0; bottom: 0.1em; }
 h2, h3, h4 { position: relative; }
 .secnum {
   position: absolute;
