@@ -26,7 +26,7 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVER = "http://SYMBOL-HOST"
-CHUNK_EXTRACTED = 40 * 1024 * 1024
+CHUNK_EXTRACTED = 16 * 1024 * 1024
 
 ROOT_INDEX = (
     '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
@@ -84,12 +84,17 @@ def put_file(site: str, rel: str, path: pathlib.Path):
     )
 
 
-CHUNK_COMPRESSED = 24 * 1024 * 1024
+CHUNK_COMPRESSED = 12 * 1024 * 1024
 
 
 def push_tar(site: str, members: list[tuple[str, pathlib.Path]], n, total):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        # the server strips a lone top-level directory from archives;
+        # a root-level marker member defeats that heuristic
+        marker = tarfile.TarInfo(".symbol-keep")
+        marker.size = 0
+        tf.addfile(marker, io.BytesIO(b""))
         for rel, path in members:
             tf.add(path, arcname=rel)
     data = buf.getvalue()
@@ -113,6 +118,9 @@ def push_tar(site: str, members: list[tuple[str, pathlib.Path]], n, total):
                 r.read()
             return
         except urllib.error.HTTPError as e:
+            if e.code >= 500:
+                raise SystemExit(
+                    f"server error {e.code}; stopping (resume by rerunning)")
             if e.code == 413 and len(members) > 1:
                 # the request cap in practice is lower than documented:
                 # split until the server accepts
@@ -164,11 +172,15 @@ def main():
         print(f"{len(todo)} changed/new, {len(stale)} stale on server",
               flush=True)
         if stale and not args.dry_run:
+            failed = 0
             for r in stale:
                 url = f"{SERVER}/{args.site}/" + urllib.parse.quote(r)
-                subprocess.run(["curl", "-fsS", "-o", "/dev/null",
-                                "-X", "DELETE", url], check=True)
-            print(f"deleted {len(stale)} stale files", flush=True)
+                rc = subprocess.run(["curl", "-fsS", "-o", "/dev/null",
+                                     "-X", "DELETE", url], check=False)
+                failed += rc.returncode != 0
+            print(f"deleted {len(stale) - failed} stale files"
+                  + (f" ({failed} already gone)" if failed else ""),
+                  flush=True)
 
     if args.dry_run:
         for r in todo[:20]:
@@ -194,7 +206,10 @@ def main():
             size += fsize
         for i, members in enumerate(chunks, 1):
             push_tar(args.site, members, i, len(chunks))
+            time.sleep(2)  # let the server breathe between unpacks
 
+    subprocess.run(["curl", "-fsS", "-o", "/dev/null", "-X", "DELETE",
+                    f"{SERVER}/{args.site}/.symbol-keep"], check=False)
     print(f"done: {SERVER}/{args.site}/", flush=True)
 
 
