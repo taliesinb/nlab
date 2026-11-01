@@ -257,8 +257,11 @@ database across runs.
 
 ### Deploying
 
-- Netlify: `netlify deploy --prod --dir dist/html` (`_redirects` sends `/` to
-  `search.html`).
+- Netlify: `uv run nlab deploy-netlify` (production; `--draft` for a preview
+  URL, `--dry-run` to print the command). `_redirects` sends `/` to
+  `search.html`. The site ID is not in the repository: link the checkout once
+  with `netlify link --id SITE_ID` (kept in the gitignored
+  `.netlify/state.json`), or pass `--site` / set `NLAB_NETLIFY_SITE`.
 - A symbol static host: `uv run nlab deploy-symbol` (hash-diffed
   incremental uploads).
 - Any plain static host works, as all links are relative; give it a root

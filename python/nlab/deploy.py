@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
-"""Deploy dist/html to a symbol static host.
+"""Deploy dist/html: to Netlify, or to a symbol static host.
 
-Initial upload streams the tree as a series of tar.gz chunks (the
-server unpacks archives up to 50 MiB compressed / 80 MiB extracted and
-merges them into the site). Subsequent runs diff local blake3 hashes
-against GET /<site>/FILES and PUT only changed or new files.
+Netlify (`nlab deploy-netlify`) wraps `netlify deploy --dir dist/html`
+(production unless --draft); Netlify's own diffing uploads only changed
+files, and dist/html/_redirects sends / to search.html. The site ID is not
+kept in this repository: it comes from --site, $NLAB_NETLIFY_SITE, or the
+gitignored .netlify/state.json that a one-time `netlify link --id SITE_ID`
+writes.
+
+Symbol (`nlab deploy-symbol`): the initial upload streams the tree as a
+series of tar.gz chunks (the server unpacks archives up to 50 MiB
+compressed / 80 MiB extracted and merges them into the site). Subsequent
+runs diff local blake3 hashes against GET /<site>/FILES and PUT only
+changed or new files. Symbol has no _redirects, so a root index.html
+redirecting to search.html is generated.
 
 Usage:
+  nlab deploy-netlify [--site ID] [--dir dist/html] [--draft] [--dry-run]
   nlab deploy-symbol [--site nlab] [--dir dist/html] [--full] [--dry-run]
-
-The root index.html for symbol (no Netlify _redirects) is generated
-here as a redirect to search.html.
 """
 
 import argparse
 import io
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import tarfile
 import time
@@ -26,7 +35,56 @@ import urllib.request
 
 import blake3
 
-from .paths import DIST
+from .paths import DIST, ROOT
+
+
+def netlify_site(explicit: str | None) -> tuple[str | None, str]:
+    """(site id, where it came from); None means the CLI's own link."""
+    if explicit:
+        return explicit, "--site"
+    if os.environ.get("NLAB_NETLIFY_SITE"):
+        return os.environ["NLAB_NETLIFY_SITE"], "$NLAB_NETLIFY_SITE"
+    state = ROOT / ".netlify/state.json"
+    if state.exists():
+        try:
+            site = json.loads(state.read_text()).get("siteId")
+        except json.JSONDecodeError:
+            site = None
+        if site:
+            return None, f"netlify link ({state.relative_to(ROOT)}: {site})"
+    raise SystemExit(
+        "error: which Netlify site? Pass --site ID, set NLAB_NETLIFY_SITE, or "
+        "link this checkout once with `netlify link --id SITE_ID` (stored in the "
+        "gitignored .netlify/state.json)")
+
+
+def netlify_main(argv=None):
+    ap = argparse.ArgumentParser(prog="nlab deploy-netlify",
+                                 description="Deploy dist/html to Netlify")
+    ap.add_argument("--site", help="site ID or name (default: $NLAB_NETLIFY_SITE, "
+                                   "else the checkout's `netlify link`)")
+    ap.add_argument("--dir", default=str(DIST / "html"))
+    ap.add_argument("--draft", action="store_true",
+                    help="deploy to a preview URL instead of production")
+    ap.add_argument("--dry-run", action="store_true", help="print the command only")
+    args = ap.parse_args(argv)
+
+    base = pathlib.Path(args.dir)
+    if not (base / "search.html").exists():
+        raise SystemExit(f"error: {base} has no search.html; run `nlab build-site` "
+                         "(or `nlab assemble-site`) first")
+    if not shutil.which("netlify"):
+        raise SystemExit("error: the Netlify CLI is not installed "
+                         "(`npm install -g netlify-cli`)")
+    site, source = netlify_site(args.site)
+    cmd = ["netlify", "deploy", "--dir", str(base)]
+    if not args.draft:
+        cmd.append("--prod")
+    if site:
+        cmd += ["--site", site]
+    print(f"site from {source}\n$ {' '.join(cmd)}", flush=True)
+    if not args.dry_run:
+        subprocess.run(cmd, cwd=ROOT, check=True)
 
 SERVER = "http://SYMBOL-HOST"
 CHUNK_EXTRACTED = 16 * 1024 * 1024
