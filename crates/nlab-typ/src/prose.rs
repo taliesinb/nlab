@@ -792,6 +792,7 @@ const PAGE_PREAMBLE: &str = r##"#import "@local/mitex:0.2.7": mi-itex, mitex-ite
 #let underoverset = scope-or("underoverset", none)
 #let stackrel = one-arg-ok(scope-or("stackrel", none))
 #let textmath = scope-or("textmath", none)
+#let middle = scope-or("middle", it => math.mid(it))
 #let big = scope-or("big", none)
 #let Big = scope-or("Big", none)
 #let bigg = scope-or("bigg", none)
