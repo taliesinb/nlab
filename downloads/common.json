@@ -1,0 +1,53 @@
+{
+  "extends": "ncatlab.json",
+  "note": "Adds arXiv and a few open-access mathematics sources. Third-party papers: for private/offline builds, not a public deploy.",
+  "rules": [
+    {
+      "name": "no-paywalls",
+      "host": [
+        "doi.org", "dx.doi.org", "link.springer.com", "www.jstor.org", "jstor.org",
+        "www.sciencedirect.com", "onlinelibrary.wiley.com", "www.tandfonline.com",
+        "academic.oup.com", "www.cambridge.org", "dl.acm.org", "ieeexplore.ieee.org",
+        "iopscience.iop.org", "journals.aps.org", "www.worldscientific.com",
+        "scholar.google.com", "books.google.com", "www.researchgate.net",
+        "mathscinet.ams.org", "zbmath.org", "inspirehep.net"
+      ],
+      "disable": true,
+      "note": "Publisher landing pages, paywalls and indexes: never PDFs we may fetch. Also blocks redirects into these hosts (e.g. via doi.org)."
+    },
+    {
+      "name": "arxiv",
+      "host": ["arxiv.org", "www.arxiv.org"],
+      "path": ["/abs/?*", "/pdf/?*"],
+      "rewrite": ["(?i)^https?://(?:www\\.)?arxiv\\.org/(?:abs|pdf)/([^?#]+?)(?:\\.pdf)?/?(?:[?#].*)?$", "https://arxiv.org/pdf/\\1"],
+      "accept": ["pdf"],
+      "max_concurrent": 1,
+      "min_interval": 15,
+      "max_bytes": 52428800,
+      "note": "~15,500 papers. arxiv.org/robots.txt sets Crawl-delay: 15 (export.arxiv.org disallows crawling entirely), so a full run takes ~2.7 days; it is resumable."
+    },
+    {
+      "name": "open-access-journals",
+      "host": [
+        "www.tac.mta.ca", "tac.mta.ca", "www.numdam.org", "archive.numdam.org", "numdam.org",
+        "www.emis.de", "emis.de", "www.math.uni-bielefeld.de", "core.ac.uk"
+      ],
+      "path": "*.pdf",
+      "accept": ["pdf"],
+      "max_concurrent": 1,
+      "min_interval": 2,
+      "max_bytes": 52428800,
+      "note": "Theory and Applications of Categories, NUMDAM, EMIS (incl. Documenta Mathematica), CORE: open-access PDFs linked directly from nLab pages."
+    },
+    {
+      "name": "web-archive",
+      "host": "web.archive.org",
+      "path": "*.pdf",
+      "accept": ["pdf"],
+      "max_concurrent": 1,
+      "min_interval": 5,
+      "max_bytes": 52428800,
+      "note": "Archived copies of dead links; the Internet Archive rate-limits aggressively."
+    }
+  ]
+}

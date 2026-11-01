@@ -508,12 +508,12 @@ def main() -> None:
             shutil.copy(typst_css, documents / "assets" / "typst.css")
         shutil.copy(here / "rewrites" / "docset_shell.css",
                     documents / "assets" / "nlab-typst.css")
-        for store in ("nlab-files", "nlab-files-web"):
+        # image stores: build/files (content-addressed, rewrites/
+        # downloads.py) and its webp re-encodes
+        for store, name in (("files", "files"), ("nlab-files-web", "files-web")):
             src = args.typst_pages.parent / store
             if src.is_dir():
-                dst = documents / "pages" / (
-                    "files" if store == "nlab-files" else "files-web")
-                shutil.copytree(src, dst)
+                shutil.copytree(src, documents / "pages" / name)
 
     css_links = "\n".join(
         f'<link href="../assets/{f}" media="all" rel="stylesheet" '

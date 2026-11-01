@@ -180,10 +180,10 @@ fn math_to_typst(tex: &str, display: bool) -> String {
     }
 }
 
-/// Inline `<img>`/`<figure>` HTML referencing the nLab file store.
-/// Images already present in the local cache (NLAB_FILES_ROOT, default
-/// build/nlab-files next to the content mirror) embed as #figure/#image
-/// with a `files/<name>` path; otherwise they degrade to a link.
+/// Inline `<img>`/`<figure>` HTML referencing the nLab file store (or any
+/// URL). Images present in the downloads map (see `local_image`) embed as
+/// #figure/#image with their `files/<hash>.<ext>` path; otherwise they
+/// degrade to a link.
 fn extract_images(src: &str, stash: &mut Stash) -> String {
     // presentation wrappers around figures would make pulldown-cmark
     // swallow the whole block (with our placeholder) as raw HTML
@@ -208,10 +208,48 @@ fn extract_images(src: &str, stash: &mut Stash) -> String {
         .to_string()
 }
 
-fn files_root() -> std::path::PathBuf {
-    std::env::var("NLAB_FILES_ROOT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("build/nlab-files"))
+/// Downloaded files, from the TSV named by NLAB_FILES_MAP (written by
+/// rewrites/downloads.py): canonical URL, tab, store path
+/// (`files/<hash>.<ext>`), tab, kind (png/jpg/gif/webp/svg/pdf).
+fn files_map() -> &'static std::collections::HashMap<String, (String, String)> {
+    static MAP: std::sync::OnceLock<std::collections::HashMap<String, (String, String)>> =
+        std::sync::OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut m = std::collections::HashMap::new();
+        if let Ok(path) = std::env::var("NLAB_FILES_MAP") {
+            if let Ok(txt) = std::fs::read_to_string(path) {
+                for line in txt.lines() {
+                    let mut cols = line.split('\t');
+                    if let (Some(url), Some(stored), Some(kind)) =
+                        (cols.next(), cols.next(), cols.next())
+                    {
+                        m.insert(url.to_string(), (stored.to_string(), kind.to_string()));
+                    }
+                }
+            }
+        }
+        m
+    })
+}
+
+/// Map key for a file URL; must match `canonical_url` in
+/// rewrites/downloads.py. nLab uploads (absolute, relative, http or
+/// https) all become https://ncatlab.org/nlab/files/<name>.
+fn canonical_file_url(url: &str) -> String {
+    let u = url.trim();
+    if let Some((_, rest)) = u.split_once("/nlab/files/") {
+        let name = rest.split(|c| c == '?' || c == '#').next().unwrap_or(rest);
+        return format!("https://ncatlab.org/nlab/files/{}", name);
+    }
+    u.to_string()
+}
+
+/// Store path of a downloaded *image* for this URL, if any.
+fn local_image(url: &str) -> Option<String> {
+    files_map()
+        .get(&canonical_file_url(url))
+        .filter(|(_, kind)| kind != "pdf")
+        .map(|(stored, _)| stored.clone())
 }
 
 /// Escape caption text for typst, but keep `[text](url)` links live.
@@ -247,10 +285,8 @@ fn image_typst(url: &str, caption_html: &str) -> String {
         .unwrap()
         .replace(&caption, "")
         .to_string();
-    let name = url.rsplit('/').next().unwrap_or(url);
-    let cached = url.contains("/nlab/files/") && files_root().join(name).exists();
-    if cached {
-        let img = format!("nlab-image(\"files/{}\")", name);
+    if let Some(stored) = local_image(url) {
+        let img = format!("nlab-image(\"{}\")", stored);
         if caption.is_empty() {
             format!("#{}", img)
         } else {
@@ -1206,18 +1242,20 @@ terminology|notn|notation|conjecture|assumption|exercise";
                 .unwrap()
                 .captures(body)
                 .map(|m| m[1].to_string());
-            match name {
-                Some(n) if files_root().join(&n).exists() => stash.put_src(
-                    format!("#nlab-image(\"files/{}\")", n),
-                    c[0].to_string(),
-                ),
-                Some(n) => stash.put_src(
-                    format!(
-                        "#link(\"https://ncatlab.org/nlab/files/{}\")[(figure)];",
-                        n.replace(' ', "+")
+            let url = name.map(|n| {
+                format!("https://ncatlab.org/nlab/files/{}", n.replace(' ', "+"))
+            });
+            match url {
+                Some(u) => match local_image(&u) {
+                    Some(stored) => stash.put_src(
+                        format!("#nlab-image(\"{}\")", stored),
+                        c[0].to_string(),
                     ),
-                    c[0].to_string(),
-                ),
+                    None => stash.put_src(
+                        format!("#link(\"{}\")[(figure)];", u),
+                        c[0].to_string(),
+                    ),
+                },
                 None => String::new(),
             }
         })

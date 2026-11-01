@@ -23,11 +23,16 @@ fetch_mirror() { # fetch_mirror REPO DEST
         echo "using cached $dest (pass --refresh to re-download)"
         return
     fi
-    rm -rf "$dest" "$dest.tmp"
+    # download, extract, then swap: a failed fetch keeps the old mirror;
+    # -m gives files fresh mtimes (see build_site.sh)
+    rm -rf "$dest.tmp" "$dest.tar.gz"
     mkdir -p "$dest.tmp"
     echo "downloading $repo (this is large; a few hundred MB) ..."
-    curl -fL "https://github.com/ncatlab/$repo/archive/refs/heads/master.tar.gz" \
-        | tar xz -C "$dest.tmp" --strip-components=1
+    curl -fL --retry 3 -o "$dest.tar.gz" \
+        "https://github.com/ncatlab/$repo/archive/refs/heads/master.tar.gz"
+    tar xzmf "$dest.tar.gz" -C "$dest.tmp" --strip-components=1
+    rm -f "$dest.tar.gz"
+    rm -rf "$dest"
     mv "$dest.tmp" "$dest"
 }
 
@@ -35,7 +40,8 @@ fetch_asset() { # fetch_asset URL-PATH
     local dest="$BUILD/assets/$(basename "$1")"
     if [[ -f "$dest" && "$REFRESH" != "--refresh" ]]; then return; fi
     mkdir -p "$BUILD/assets"
-    curl -fsSL "https://ncatlab.org/$1" -o "$dest"
+    curl -fsSL --retry 3 "https://ncatlab.org/$1" -o "$dest.part"
+    mv "$dest.part" "$dest"
     echo "fetched $1"
 }
 

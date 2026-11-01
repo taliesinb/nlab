@@ -18,7 +18,7 @@ import unicodedata
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "build/typ-pages"
-FILES_ROOT = ROOT / "build/nlab-files"
+FILES_ROOT = ROOT / "build/files"  # content-addressed store (downloads.py)
 
 
 def slugify(name: str) -> str:

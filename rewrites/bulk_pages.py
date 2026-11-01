@@ -24,7 +24,9 @@ BUILD = ROOT / "build/nlab-content/pages"
 OUT = ROOT / "build/typ-pages"
 BIN = ROOT / "crates/nlab-typ/target/release/nlab-typ"
 REPORT = HERE / "out/bulk-report.txt"
-FILES_ROOT = ROOT / "build/nlab-files"
+FILES_ROOT = ROOT / "build/files"  # content-addressed store (rewrites/downloads.py)
+FILES_MAP = ROOT / "build/files.tsv"  # URL -> store path, read by nlab-typ
+PAGEIDX = ROOT / "build/page-index.tsv"  # rewrites/page_index.py
 
 
 CSS = (HERE / "docset_shell.css").read_text()
@@ -57,7 +59,8 @@ def apply_edits(pid: str, text: str) -> tuple[str, str | None]:
     return text, "; ".join(problems) or None
 
 SVG_CACHE = ROOT / "build/svgmin"
-WEBP_CACHE = ROOT / "build/nlab-files-web"
+WEBP_CACHE = ROOT / "build/nlab-files-web"  # published as files-web/
+CLASS_CACHE = ROOT / "build/nlab-files-class"  # line-art verdicts (not published)
 STYLE_RE = re.compile(r"<style>.*?</style>", re.S)
 SVG_RE = re.compile(r"<svg.*?</svg>", re.S)
 IMG_RE = re.compile(r'(<img[^>]*src=")files/([^"]+)(")')
@@ -102,20 +105,12 @@ def webp_name(name: str) -> str | None:
     src = FILES_ROOT / name
     if not src.exists():
         return None
-    out = WEBP_CACHE / f"{stem}.webp"
+    # keyed by the full name: X.png and X.jpg both exist in the store
+    out = WEBP_CACHE / f"{name}.webp"
     if out.exists():
         return out.name
     WEBP_CACHE.mkdir(parents=True, exist_ok=True)
-    # pages link ../assets/*.css; mirror the shared sheets there so the
-    # generated pages preview correctly straight from build/typ-pages
-    assets = ROOT / "build/assets"
-    if assets.is_dir():
-        import shutil
-        shutil.copy(HERE / "docset_shell.css", assets / "nlab-typst.css")
-        tc = ROOT / "build/typ-assets/typst.css"
-        if tc.exists():
-            shutil.copy(tc, assets / "typst.css")
-    tmp = WEBP_CACHE / f".{stem}.{os.getpid()}.webp"
+    tmp = WEBP_CACHE.parent / f".webp.{name}.{os.getpid()}.part"
     try:
         r = subprocess.run(
             ["cwebp", "-quiet", "-q", "85", str(src), "-o", str(tmp)],
@@ -135,18 +130,22 @@ def webp_name(name: str) -> str | None:
 def is_lineart(name: str) -> bool:
     """Line-art-on-white heuristic (near-white border + few distinct
     colors): such images invert cleanly in dark mode, photos must not.
-    Cached as a .lineart/.photo sidecar next to the webp cache."""
-    stem = name.rsplit(".", 1)[0]
-    yes, no = WEBP_CACHE / f"{stem}.lineart", WEBP_CACHE / f"{stem}.photo"
+    Cached as a .lineart/.photo sidecar in CLASS_CACHE. Without Pillow
+    nothing is cached, so installing it later takes effect."""
+    yes, no = CLASS_CACHE / f"{name}.lineart", CLASS_CACHE / f"{name}.photo"
     if yes.exists():
         return True
     if no.exists():
         return False
-    src = FILES_ROOT / name
-    verdict = False
     try:
         from PIL import Image
-
+    except ImportError:
+        return False
+    src = FILES_ROOT / name
+    if not src.exists():
+        return False
+    verdict = False
+    try:
         im = Image.open(src).convert("RGB")
         im.thumbnail((64, 64))
         px = list(im.getdata())
@@ -159,7 +158,7 @@ def is_lineart(name: str) -> bool:
         verdict = white > 0.85 and colors < 400
     except Exception:
         pass
-    WEBP_CACHE.mkdir(parents=True, exist_ok=True)
+    CLASS_CACHE.mkdir(parents=True, exist_ok=True)
     (yes if verdict else no).touch()
     return verdict
 
@@ -203,6 +202,8 @@ def one(md: pathlib.Path, pdf: bool, html: bool = False):
     edit_file = EDITS / f"{pid}.json"
     try:
         stamp = max(md.stat().st_mtime, BIN.stat().st_mtime)
+        if PAGEIDX.exists():  # rewritten only when its content changes
+            stamp = max(stamp, PAGEIDX.stat().st_mtime)
         if edit_file.exists():
             stamp = max(stamp, edit_file.stat().st_mtime)
         if target.exists() and target.stat().st_mtime > stamp:
@@ -211,8 +212,8 @@ def one(md: pathlib.Path, pdf: bool, html: bool = False):
         pass
     env = dict(
         os.environ,
-        NLAB_FILES_ROOT=str(FILES_ROOT),
-        NLAB_PAGEIDX=str(ROOT / "build/page-index.tsv"),
+        NLAB_FILES_MAP=str(FILES_MAP),
+        NLAB_PAGEIDX=str(PAGEIDX),
     )
     source, edit_problems = apply_edits(pid, md.read_text(errors="replace"))
     if edit_problems:
@@ -275,8 +276,18 @@ def main():
     ap.add_argument("--jobs", type=int, default=8)
     args = ap.parse_args()
 
+    if not BIN.exists():
+        raise SystemExit(f"error: {BIN} missing (cargo build --release in crates/nlab-typ)")
+    if not PAGEIDX.exists():
+        print(f"warning: {PAGEIDX} missing: every wiki link will point at "
+              "ncatlab.org (run rewrites/page_index.py)", flush=True)
+    if not FILES_MAP.exists():
+        print(f"warning: {FILES_MAP} missing: no images will be embedded "
+              "(run rewrites/downloads.py)", flush=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    files_link = OUT / "files"
+    files_link = OUT / "files"  # pages reference files/<hash>.<ext>
+    if files_link.is_symlink() and files_link.resolve() != FILES_ROOT.resolve():
+        files_link.unlink()  # pre-store builds pointed at build/nlab-files
     if not files_link.exists():
         files_link.symlink_to(FILES_ROOT)
     web_link = OUT / "files-web"
@@ -297,6 +308,17 @@ def main():
     pages = sorted(BUILD.rglob("content.md"))
     if args.limit:
         pages = pages[: args.limit]
+    else:
+        # pages deleted upstream (after a mirror refresh) must not linger:
+        # html_site.py/typst_site.py publish whatever is in OUT
+        ids = {p.parent.name for p in pages}
+        gone = [f for f in OUT.iterdir()
+                if (m := re.fullmatch(r"(\d+)\.(typ|html|pdf)", f.name))
+                and m.group(1) not in ids]
+        for f in gone:
+            f.unlink()
+        if gone:
+            print(f"pruned {len(gone)} outputs of pages no longer in the mirror")
 
     t0 = time.time()
     ok = cached = 0

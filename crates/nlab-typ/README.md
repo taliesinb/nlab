@@ -13,7 +13,9 @@ Modes: `dump` (CST), `grid`/`grids` (cell-grid JSON), `typsts`
 The mitex fork carries fixes that make several `fix_tex` workarounds
 unnecessary (branches: `fix/mathsf-upright`, `fix/xarrow-optional-labels`,
 `feat/underoverset`, `feat/converter-api`; integration branch `nlab`).
-Build and install it as a local typst package:
+Build and install it as a local typst package (`../../build_site.sh`
+does this automatically; on Linux the package directory is
+`${XDG_DATA_HOME:-~/.local/share}/typst/packages/local/mitex/0.2.7`):
 
 ```sh
 cd ~/github/mitex && git checkout nlab

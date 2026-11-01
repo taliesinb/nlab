@@ -11,6 +11,7 @@ Deploy: netlify deploy --prod --dir dist/html
 """
 
 import argparse
+import html
 import os
 import pathlib
 import re
@@ -25,6 +26,27 @@ SRC = ROOT / "build/typ-pages"
 
 LINK_RE = re.compile(r'href="(\d+)\.html(#[^"]*)?"')
 IMG_RE = re.compile(r'(src=")(files(?:-web)?/)')
+EXT_HREF_RE = re.compile(r'href="((?:https?://|/nlab/)[^"]*)"')
+FILES_MAP = ROOT / "build/files.tsv"  # rewrites/downloads.py export
+
+
+def canonical_url(url: str) -> str:
+    """Same as rewrites/downloads.py (and nlab-typ's canonical_file_url)."""
+    u = url.strip()
+    if "/nlab/files/" in u:
+        name = re.split(r"[?#]", u.split("/nlab/files/", 1)[1], maxsplit=1)[0]
+        return "https://ncatlab.org/nlab/files/" + name
+    return u
+
+
+def load_files_map() -> dict[str, tuple[str, str]]:
+    out = {}
+    if FILES_MAP.exists():
+        for line in FILES_MAP.read_text(encoding="utf-8").splitlines():
+            cols = line.split("\t")
+            if len(cols) >= 3:
+                out[cols[0]] = (cols[1], cols[2])
+    return out
 
 # custom search UI over pagefind.js (no pagefind-ui): the exact
 # markup/css iterated in search-sample.html. rel is "../" on page
@@ -237,19 +259,6 @@ if (q0) { inp.value = q0; run(q0); }
     )
 
 
-def hardlink_tree(src: pathlib.Path, dst: pathlib.Path):
-    for f in src.rglob("*"):
-        if not f.is_file():
-            continue
-        t = dst / f.relative_to(src)
-        t.parent.mkdir(parents=True, exist_ok=True)
-        if not t.exists():
-            try:
-                os.link(f, t)
-            except OSError:
-                shutil.copy(f, t)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "dist/html"))
@@ -289,12 +298,27 @@ def main():
             return m.group(0)
         return f'href="../{slug}/{frag}"'
 
+    files = load_files_map()
+    if not files:
+        print(f"note: {FILES_MAP} missing or empty: no downloaded files to publish")
+
+    def relink_external(m: re.Match) -> str:
+        url = html.unescape(m.group(1))
+        hit = files.get(canonical_url(url))
+        if hit and hit[1] == "pdf":  # downloaded copy (images are inlined already)
+            return (f'href="../{hit[0]}" data-original-url="'
+                    f'{html.escape(url, quote=True)}"')
+        if url.startswith("/nlab/"):  # wiki-relative: live site
+            return f'href="https://ncatlab.org{m.group(1)}"'
+        return m.group(0)
+
     for p in pages:
         pid = p.stem
         d = out / slug_of[pid]
         d.mkdir(exist_ok=True)
         text = p.read_text(errors="replace")
         text = LINK_RE.sub(relink, text)
+        text = EXT_HREF_RE.sub(relink_external, text)
         text = IMG_RE.sub(r"\1../\2", text)
         text = text.replace(
             "</head>",
@@ -327,8 +351,25 @@ def main():
     typst_css = ROOT / "build/typ-assets/typst.css"
     if typst_css.exists():
         shutil.copy(typst_css, out / "assets" / "typst.css")
-    hardlink_tree(ROOT / "build/nlab-files", out / "files")
-    hardlink_tree(ROOT / "build/nlab-files-web", out / "files-web")
+    # publish exactly what the downloads export lists (a narrower preset
+    # also narrows the site), and drop files from earlier runs
+    published = {pathlib.PurePosixPath(p).name for p, _ in files.values()}
+    # webp re-encodes made by bulk_pages.py, for the published images
+    webps = {f"{n}.webp" for n in published
+             if (ROOT / "build/nlab-files-web" / f"{n}.webp").exists()}
+    for store, sub, names in (("build/files", "files", published),
+                              ("build/nlab-files-web", "files-web", webps)):
+        (out / sub).mkdir(exist_ok=True)
+        for name in names:
+            src, dst = ROOT / store / name, out / sub / name
+            if src.exists() and not dst.exists():
+                try:
+                    os.link(src, dst)  # hardlink: same content, no copy
+                except OSError:
+                    shutil.copy(src, dst)
+        for old in (out / sub).iterdir():
+            if old.name not in names:
+                old.unlink()
 
     (out / "search.html").write_text(
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
@@ -348,7 +389,8 @@ def main():
     if not args.no_search:
         import subprocess
         subprocess.run(
-            ["npx", "-y", "pagefind", "--site", str(out)],
+            # pinned: the custom search UI above drives pagefind.js's API
+            ["npx", "-y", "pagefind@1.5.2", "--site", str(out)],
             check=True,
             cwd=str(ROOT),
         )

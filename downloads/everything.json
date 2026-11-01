@@ -1,0 +1,17 @@
+{
+  "extends": "common.json",
+  "note": "common.json plus every direct .pdf link on any other host (~7,700 PDFs on ~2,200 hosts). Private/offline builds only. Rules from common.json come first, so its disabled hosts stay disabled.",
+  "rules": [
+    {
+      "name": "any-pdf",
+      "host": "*",
+      "path": "*.pdf",
+      "accept": ["pdf"],
+      "max_concurrent": 1,
+      "min_interval": 2,
+      "max_bytes": 52428800,
+      "max_total_bytes": 21474836480,
+      "note": "Catch-all: one request at a time per host, paced, robots.txt obeyed; stops queuing new downloads once 20 GB have been fetched under this rule."
+    }
+  ]
+}
