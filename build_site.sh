@@ -148,7 +148,7 @@ python3 "$ROOT/rewrites/page_index.py"
 step "downloads ($(basename "$DOWNLOADS"); rate-limited and resumable, Ctrl-C is safe)"
 python3 "$ROOT/rewrites/downloads.py" --config "$DOWNLOADS"
 
-step "converting pages (--jobs $JOBS; ~10 min on a recent Mac for a full run)"
+step "converting pages (--jobs $JOBS; a cold full run is ~1 h on an M4, mostly svgo; reruns convert only what changed)"
 python3 "$ROOT/rewrites/bulk_pages.py" --html --jobs "$JOBS"
 head -1 "$ROOT/rewrites/out/bulk-report.txt"
 

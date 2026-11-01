@@ -152,7 +152,9 @@ In order (each step can also be run by hand):
    `content.md` (after applying the corrections in `edits/`) with `nlab-typ`,
    compiles it with typst's HTML export, and post-processes it into
    `build/typ-pages/<id>.html` (shared stylesheets, svgo-minified SVGs, webp
-   images). Results are cached in `build/state.db`: each page is keyed on a
+   images). A cold full run takes about an hour on a 10-core M4, most of it
+   one `svgo` process per distinct diagram (~53,000, cached in
+   `build/svgmin`). Results are cached in `build/state.db`: each page is keyed on a
    hash of its source (after `edits/`), its title, how each of its
    `[[links]]` resolves in the page index, the `files.tsv` entries of its
    images, and the tools (converter binary, mitex package, typst version,
