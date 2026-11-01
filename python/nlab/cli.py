@@ -8,6 +8,8 @@ import sys
 COMMANDS = {
     "build-site": ("nlab.build:build_site",
                    "everything, from a clean checkout to dist/html"),
+    "serve-site": ("nlab.build:serve_site",
+                   "serve dist/html locally (building it first if needed)"),
     "build-docset": ("nlab.build:build_docset", "dist/nLab.docset for Dash"),
     "build-typst-site": ("nlab.typst_site:main",
                          "dist/typst: the pages as slug-named .typ sources"),

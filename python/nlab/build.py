@@ -1,15 +1,20 @@
 """The end-to-end builds, and small inspection commands.
 
   nlab build-site    clean checkout -> dist/html (every step cached)
+  nlab serve-site    serve dist/html locally (building it first if needed)
   nlab build-docset  dist/nLab.docset for Dash
   nlab convert-page  one page -> typst on stdout (debugging)
   nlab status        what build/state.db knows
 """
 
 import argparse
+import errno
+import functools
+import http.server
 import os
 import sqlite3
 import sys
+from pathlib import Path
 
 from .paths import (DIST, DOWNLOAD_PRESETS, FILES_MAP, PAGE_INDEX, PAGES, ROOT,
                     STATE_DB, TYP_PAGES)
@@ -55,6 +60,67 @@ def build_site(argv=None):
     site.main(["--no-search"] if args.no_search else [])
     print(f"\nSite written to {DIST / 'html'}\nPreview: python3 -m http.server -d "
           f"{(DIST / 'html').relative_to(ROOT)} 8000  ->  http://localhost:8000/search.html")
+
+
+class SiteHandler(http.server.SimpleHTTPRequestHandler):
+    """Static files from dist/html; `/` redirects to the search page (what
+    _redirects does on Netlify). Requests are not logged."""
+
+    def do_GET(self):
+        if self.path.split("?", 1)[0] == "/":
+            query = self.path[1:]  # keep ?q=... on the way to the search page
+            self.send_response(302)
+            self.send_header("Location", "/search.html" + query)
+            self.end_headers()
+            return
+        super().do_GET()
+
+    def log_message(self, format, *args):
+        pass
+
+
+def serve(directory: Path, bind: str, port: int) -> None:
+    handler = functools.partial(SiteHandler, directory=str(directory))
+    try:
+        server = http.server.ThreadingHTTPServer((bind, port), handler)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            raise SystemExit(f"error: port {port} is in use; pick another with --port")
+        raise
+    host = "localhost" if bind in ("127.0.0.1", "::1") else bind
+    print(f"Serving {directory} at http://{host}:{port}/search.html "
+          "(Ctrl-C to stop)", flush=True)
+    with server:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nstopped")
+
+
+def serve_site(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="nlab serve-site",
+        description="Serve dist/html locally. If no site has been built yet (or with "
+                    "--rebuild), run `nlab build-site` first and serve only if it "
+                    "succeeds; options not listed here are passed on to build-site "
+                    "(e.g. --downloads, --jobs).")
+    ap.add_argument("--port", type=int, default=8000, help="default 8000")
+    ap.add_argument("--bind", default="127.0.0.1",
+                    help="address to listen on (default 127.0.0.1, this machine only)")
+    ap.add_argument("--rebuild", action="store_true",
+                    help="run build-site first even if a site exists")
+    args, build_args = ap.parse_known_args(argv)
+
+    site = DIST / "html"
+    built = (site / "search.html").exists()
+    if args.rebuild or not built:
+        if not args.rebuild:
+            print(f"no site in {site} yet: building it first", flush=True)
+        build_site(build_args)  # raises on failure, so nothing is served
+    elif build_args:
+        ap.error(f"unrecognized arguments: {' '.join(build_args)} "
+                 "(build-site options need --rebuild when a site exists)")
+    serve(site, args.bind, args.port)
 
 
 def build_docset(argv=None):

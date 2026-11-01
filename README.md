@@ -95,9 +95,16 @@ uv run nlab build-site --downloads downloads/common.json   # also fetch arXiv et
 `uv run` creates the environment, installs the Python dependencies and
 compiles the converter (`nlab._conv`, a PyO3 extension built by maturin)
 first; it rebuilds the extension by itself whenever the Rust changes. Every
-step is cached, so reruns only redo what changed. Preview with
-`python3 -m http.server -d dist/html 8000` and open
-<http://localhost:8000/search.html>. Pages live at `dist/html/<slug>/`
+step is cached, so reruns only redo what changed. To look at it:
+
+```sh
+uv run nlab serve-site             # serves dist/html at http://localhost:8000/
+uv run nlab serve-site --port 9000 --rebuild   # build-site first, then serve
+```
+
+`serve-site` builds the site first if none exists yet (or with `--rebuild`;
+other options, e.g. `--downloads`, are passed on to `build-site`), and serves
+only if the build succeeds. `/` redirects to the search page, as on Netlify. Pages live at `dist/html/<slug>/`
 (lowercased, hyphenated page names), ~20,000 of them, ~3 GB with the
 downloaded files and the search index.
 
