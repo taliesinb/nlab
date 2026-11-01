@@ -262,8 +262,8 @@ database across runs.
   `search.html`. The site ID is not in the repository: link the checkout once
   with `netlify link --id SITE_ID` (kept in the gitignored
   `.netlify/state.json`), or pass `--site` / set `NLAB_NETLIFY_SITE`.
-- A symbol static host: `uv run nlab deploy-symbol` (hash-diffed
-  incremental uploads).
+- A symbol static host: `uv run nlab deploy-symbol --server URL` (or set
+  `NLAB_SYMBOL_URL`); hash-diffed incremental uploads.
 - Any plain static host works, as all links are relative; give it a root
   `index.html` that redirects to `search.html` (as `deploy-symbol` does).
 

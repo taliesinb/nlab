@@ -24,9 +24,9 @@ COMMANDS = {
     "convert-page": ("nlab.build:convert_page",
                      "one page -> typst on stdout (debugging)"),
     "status": ("nlab.build:status", "downloads and conversions in build/state.db"),
-    "deploy-netlify": ("nlab.deploy:netlify_main",
-                       "deploy dist/html to Netlify"),
-    "deploy-symbol": ("nlab.deploy:main", "upload dist/html to http://SYMBOL-HOST/nlab/"),
+    "deploy-netlify": ("nlab.deploy:netlify_main", "deploy dist/html to Netlify"),
+    "deploy-symbol": ("nlab.deploy:main",
+                      "deploy dist/html to a symbol static host"),
 }
 
 

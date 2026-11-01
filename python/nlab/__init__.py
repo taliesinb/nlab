@@ -11,7 +11,7 @@ The pipeline, one module per stage (all driven by the `nlab` CLI):
   site        dist/html: the static site with Pagefind search
   typst_site  dist/typst: slug-named .typ sources
   docset      dist/nLab.docset for Dash
-  deploy      upload dist/html to a symbol static host
+  deploy      deploy dist/html (Netlify, or a symbol static host)
 
 State shared between stages lives in build/state.db (SQLite).
 """

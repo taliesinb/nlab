@@ -10,7 +10,7 @@ dependencies = [
     # does not pin the binary package, so it is listed explicitly.
     "pagefind==1.5.2",
     "pagefind-bin==1.5.2",
-    "blake3>=1",           # deploy to the symbol host (hash diff)
+    "blake3>=1",           # nlab deploy-symbol (hash diff)
 ]
 
 [project.scripts]

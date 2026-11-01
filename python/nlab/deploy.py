@@ -8,8 +8,9 @@ kept in this repository: it comes from --site, $NLAB_NETLIFY_SITE, or the
 gitignored .netlify/state.json that a one-time `netlify link --id SITE_ID`
 writes.
 
-Symbol (`nlab deploy-symbol`): the initial upload streams the tree as a
-series of tar.gz chunks (the server unpacks archives up to 50 MiB
+Symbol (`nlab deploy-symbol`): the server's base URL comes from --server
+or $NLAB_SYMBOL_URL (not kept in this repository). The initial upload
+streams the tree as a series of tar.gz chunks (the server unpacks archives up to 50 MiB
 compressed / 80 MiB extracted and merges them into the site). Subsequent
 runs diff local blake3 hashes against GET /<site>/FILES and PUT only
 changed or new files. Symbol has no _redirects, so a root index.html
@@ -17,7 +18,8 @@ redirecting to search.html is generated.
 
 Usage:
   nlab deploy-netlify [--site ID] [--dir dist/html] [--draft] [--dry-run]
-  nlab deploy-symbol [--site nlab] [--dir dist/html] [--full] [--dry-run]
+  nlab deploy-symbol [--server URL] [--site nlab] [--dir dist/html] [--full]
+                     [--dry-run]
 """
 
 import argparse
@@ -86,7 +88,7 @@ def netlify_main(argv=None):
     if not args.dry_run:
         subprocess.run(cmd, cwd=ROOT, check=True)
 
-SERVER = "http://SYMBOL-HOST"
+SERVER = ""  # base URL of the symbol host, set by main()
 CHUNK_EXTRACTED = 16 * 1024 * 1024
 
 ROOT_INDEX = (
@@ -197,13 +199,21 @@ def push_tar(site: str, members: list[tuple[str, pathlib.Path]], n, total):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="nlab deploy-symbol",
-                                 description="Upload dist/html to http://SYMBOL-HOST/<site>/")
+                                 description="Upload dist/html to <server>/<site>/ "
+                                             "on a symbol static host")
+    ap.add_argument("--server", help="base URL of the symbol host "
+                                     "(default: $NLAB_SYMBOL_URL)")
     ap.add_argument("--site", default="nlab")
     ap.add_argument("--dir", default=str(DIST / "html"))
     ap.add_argument("--full", action="store_true",
                     help="upload everything, skip the remote diff")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
+    global SERVER
+    SERVER = (args.server or os.environ.get("NLAB_SYMBOL_URL") or "").rstrip("/")
+    if not SERVER:
+        raise SystemExit("error: which symbol host? Pass --server URL or set "
+                         "NLAB_SYMBOL_URL")
     base = pathlib.Path(args.dir)
 
     # symbol has no _redirects support: real root index instead
