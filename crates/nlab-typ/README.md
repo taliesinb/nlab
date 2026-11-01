@@ -13,18 +13,25 @@ Modes: `dump` (CST), `grid`/`grids` (cell-grid JSON), `typsts`
 The mitex fork carries fixes that make several `fix_tex` workarounds
 unnecessary (branches: `fix/mathsf-upright`, `fix/xarrow-optional-labels`,
 `feat/underoverset`, `feat/converter-api`; integration branch `nlab`).
-Build and install it as a local typst package (`../../build_site.sh`
-does this automatically; on Linux the package directory is
-`${XDG_DATA_HOME:-~/.local/share}/typst/packages/local/mitex/0.2.7`):
+It is pinned as the git submodule `vendor/mitex` (this crate links its
+crates by path). Build and install it as a local typst package
+(`../../build_site.sh` does this automatically; on Linux the package
+directory is `${XDG_DATA_HOME:-~/.local/share}/typst/packages/local/mitex/0.2.7`):
 
 ```sh
-cd ~/github/mitex && git checkout nlab
+cd vendor/mitex    # from the repository root
 cargo build --release --target wasm32-unknown-unknown \
     --manifest-path crates/mitex-wasm/Cargo.toml --features typst-plugin
 PKG="$HOME/Library/Application Support/typst/packages/local/mitex/0.2.7"
 rm -rf "$PKG" && mkdir -p "$PKG" && cp -r packages/mitex/* "$PKG/"
 cp target/wasm32-unknown-unknown/release/mitex_wasm.wasm "$PKG/mitex.wasm"
 ```
+
+To change the fork: work in `vendor/mitex` (a full clone; `git switch
+nlab` first, as submodules check out a detached commit), commit and push
+to the fork, then commit the new submodule pointer here (`git add
+vendor/mitex`). Push the fork *before* sharing a pointer to a commit,
+or `git submodule update` fails for everyone else.
 
 Then `NLAB_LOCAL_MITEX=1 nlab-typ typsts` emits against
 `@local/mitex:0.2.7` with the redundant workarounds disabled

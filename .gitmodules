@@ -1,0 +1,4 @@
+[submodule "vendor/mitex"]
+	path = vendor/mitex
+	url = https://github.com/taliesinb/mitex
+	branch = nlab

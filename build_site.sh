@@ -12,7 +12,7 @@
 #                     broader presets are for private builds only
 #
 # Steps (each one is cached/resumable, so rerunning is cheap):
-#   1. mitex fork   ../mitex @ nlab -> typst package @local/mitex:0.2.7
+#   1. mitex fork   submodule vendor/mitex -> typst package @local/mitex:0.2.7
 #   2. converter    crates/nlab-typ (links the same mitex checkout)
 #   3. mirror       github.com/ncatlab/nlab-content -> build/nlab-content
 #   4. page index   build/page-index.tsv (name/redirect -> id, for links)
@@ -28,10 +28,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$ROOT/build"
-MITEX="$(cd "$ROOT/.." && pwd)/mitex"   # Cargo.toml path deps expect a sibling
-MITEX_URL="https://github.com/taliesinb/mitex"
-MITEX_BRANCH="nlab"
-MITEX_KNOWN_GOOD="d13cf5fc3280f2f2ee32ddfb20e7a8b369f5a30d"  # last full-corpus build
+MITEX="$ROOT/vendor/mitex"  # git submodule: taliesinb/mitex, branch nlab
 TYPST_WANT="0.15"
 
 REFRESH=0
@@ -88,17 +85,23 @@ python3 -c 'import PIL' 2>/dev/null ||
          "(pip3 install pillow)"
 
 # ----------------------------------------------------------- 1. mitex
-step "mitex fork ($MITEX, branch $MITEX_BRANCH)"
-if [[ ! -d "$MITEX/.git" ]]; then
-    git clone -b "$MITEX_BRANCH" "$MITEX_URL" "$MITEX"
+step "mitex fork (submodule vendor/mitex)"
+if [[ ! -e "$MITEX/.git" ]]; then
+    if ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        echo "error: $MITEX is missing and this is not a git checkout;" \
+             "clone with: git clone --recursive <this repo>" >&2
+        exit 1
+    fi
+    git -C "$ROOT" submodule update --init vendor/mitex
 fi
-branch="$(git -C "$MITEX" rev-parse --abbrev-ref HEAD)"
-if [[ "$branch" != "$MITEX_BRANCH" ]]; then
-    echo "warning: $MITEX is on branch '$branch', not '$MITEX_BRANCH'" >&2
+pinned="$(git -C "$ROOT" ls-tree HEAD vendor/mitex | awk '{print $3}')"
+actual="$(git -C "$MITEX" rev-parse HEAD)"
+if [[ "$actual" != "$pinned" ]]; then
+    echo "note: vendor/mitex is at ${actual:0:7}, this repo pins ${pinned:0:7}" \
+         "(fine while developing the fork; 'git submodule update' resets it)"
 fi
-if [[ "$(git -C "$MITEX" rev-parse HEAD)" != "$MITEX_KNOWN_GOOD" ]]; then
-    echo "note: mitex at $(git -C "$MITEX" rev-parse --short HEAD), not the" \
-         "known-good ${MITEX_KNOWN_GOOD:0:7} (fine if you updated it on purpose)"
+if [[ -n "$(git -C "$MITEX" status --porcelain)" ]]; then
+    echo "note: vendor/mitex has uncommitted changes; building them"
 fi
 case "$(uname)" in
     Darwin) PKG_ROOT="$HOME/Library/Application Support/typst/packages" ;;

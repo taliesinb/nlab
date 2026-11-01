@@ -129,11 +129,11 @@ In order (each step can also be run by hand):
 
 1. **mitex fork.** Math goes through a fork of
    [mitex](https://github.com/taliesinb/mitex) (branch `nlab`, carrying
-   itex-compatibility fixes), checked out as a *sibling of this repository*
-   (`../mitex`, which `crates/nlab-typ/Cargo.toml` links by path). It is cloned
-   if absent, its wasm plugin is built, and the package is installed as the
-   local typst package `@local/mitex:0.2.7` (see
-   [crates/nlab-typ/README.md](crates/nlab-typ/README.md)).
+   itex-compatibility fixes), pinned as the git submodule `vendor/mitex`.
+   `crates/nlab-typ/Cargo.toml` links its crates by path. The submodule is
+   initialized if needed (or clone with `git clone --recursive`), its wasm
+   plugin is built, and the package is installed as the local typst package
+   `@local/mitex:0.2.7` (see [crates/nlab-typ/README.md](crates/nlab-typ/README.md)).
 2. **Converter.** `cargo build --release --manifest-path
    crates/nlab-typ/Cargo.toml`.
 3. **Mirror.** Downloads [ncatlab/nlab-content](https://github.com/ncatlab/nlab-content)
