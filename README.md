@@ -144,12 +144,20 @@ In order (each step can also be run by hand):
    fetches the files pages reference (see [Downloads](#downloads) below) into
    `build/files/` and writes `build/files.tsv`. Must run *before* step 6: the
    converter embeds only images listed there and turns the rest into links;
-   pages whose images changed are marked for re-conversion.
+   step 6 re-converts exactly the pages whose images changed.
 6. **Pages.** `rewrites/bulk_pages.py --html --jobs N` converts each
    `content.md` (after applying the corrections in `edits/`) with `nlab-typ`,
    compiles it with typst's HTML export, and post-processes it into
    `build/typ-pages/<id>.html` (shared stylesheets, svgo-minified SVGs, webp
-   images). Failures are listed in `rewrites/out/bulk-report.txt`; on the
+   images). Results are cached in `build/state.db`: each page is keyed on a
+   hash of its source (after `edits/`), its title, how each of its
+   `[[links]]` resolves in the page index, the `files.tsv` entries of its
+   images, and the tools (converter binary, mitex package, typst version,
+   this script). So a rerun converts only pages whose inputs changed; a new
+   redirect alias, say, re-converts just the pages whose links it changes.
+   Failures are cached too; `--retry-failed` tries them again, `--force`
+   ignores the cache, and `--pages ID,ID` converts specific pages.
+   Interrupting is safe. Failures are listed in `rewrites/out/bulk-report.txt`; on the
    August 2026 mirror the run was 20,723/20,723 clean, but newer wiki content
    may introduce new failures (failed pages are simply absent from the site).
    `nlab-typ` itself also invokes `typst query` (with the mitex package) to

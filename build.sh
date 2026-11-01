@@ -24,7 +24,7 @@ fetch_mirror() { # fetch_mirror REPO DEST
         return
     fi
     # download, extract, then swap: a failed fetch keeps the old mirror;
-    # -m gives files fresh mtimes (see build_site.sh)
+    # -m gives files the extraction time (see build_site.sh)
     rm -rf "$dest.tmp" "$dest.tar.gz"
     mkdir -p "$dest.tmp"
     echo "downloading $repo (this is large; a few hundred MB) ..."

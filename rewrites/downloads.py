@@ -20,8 +20,9 @@ where kind is sniffed from the bytes (png/jpg/gif/webp/svg/pdf), never
 taken from the URL or Content-Type: ncatlab.org answers a missing upload
 with 200 + an HTML page.
 
-Pages whose embedded images changed in the export get their content.md
-touched so rewrites/bulk_pages.py re-converts them.
+rewrites/bulk_pages.py keys each page's conversion on the files.tsv
+entries of the images it references, so a changed export re-converts
+exactly the affected pages.
 
 Config: a JSON file {"extends", "global", "rules", "note"}; see
 downloads/*.json and README.md. `extends` (path or list, relative to the
@@ -68,7 +69,6 @@ KIND_GROUPS = {
     "pdf": {"pdf"},
 }
 ALL_KINDS = set().union(*KIND_GROUPS.values())
-IMAGE_KINDS = KIND_GROUPS["image"]
 
 # statuses
 QUEUED, RETRY, DONE = "queued", "retry", "done"
@@ -272,15 +272,13 @@ def urls_in(text: str) -> set[str]:
     return {u for u in out if not u.endswith("/nlab/files/")}
 
 
-def scan(con: sqlite3.Connection) -> dict[str, pathlib.Path]:
+def scan(con: sqlite3.Connection):
     """Rebuild download_refs from the mirror; insert unseen URLs."""
     if not PAGES.is_dir():
         raise SystemExit(f"error: {PAGES} missing (fetch the nlab-content mirror)")
-    page_md: dict[str, pathlib.Path] = {}
     refs = []
     for md in PAGES.glob("*/*/*/*/*/content.md"):
         pid = md.parent.name
-        page_md[pid] = md
         for u in urls_in(md.read_text(encoding="utf-8", errors="replace")):
             refs.append((u, pid))
     now = time.time()
@@ -290,7 +288,6 @@ def scan(con: sqlite3.Connection) -> dict[str, pathlib.Path]:
         "INSERT OR IGNORE INTO downloads(url, status, first_seen) VALUES (?, 'new', ?)",
         ((u,) + (now,) for u in {u for u, _ in refs}))
     con.commit()
-    return page_md
 
 
 # ----------------------------------------------------------- database
@@ -912,7 +909,7 @@ def read_map(path: pathlib.Path) -> dict[str, tuple[str, str]]:
     return out
 
 
-def export(con, cfg: Config, page_md: dict[str, pathlib.Path]):
+def export(con, cfg: Config):
     old = read_map(MAP_TSV)
     new = {}
     for row in con.execute(
@@ -931,26 +928,13 @@ def export(con, cfg: Config, page_md: dict[str, pathlib.Path]):
         tmp = MAP_TSV.with_suffix(".tsv.part")
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(MAP_TSV)
-    # images are embedded at conversion time: pages whose image set
-    # changed must be re-converted (PDF links are rewritten later, by
-    # html_site.py, and need nothing)
-    def img(m, u):
-        v = m.get(u)
-        return v if v and v[1] in IMAGE_KINDS else None
-    changed = [u for u in set(old) | set(new) if img(old, u) != img(new, u)]
-    pages = set()
-    for i in range(0, len(changed), 500):
-        chunk = changed[i:i + 500]
-        pages |= {r[0] for r in con.execute(
-            "SELECT DISTINCT page FROM download_refs WHERE url IN (%s)"
-            % ",".join("?" * len(chunk)), chunk)}
-    for pid in pages:
-        if pid in page_md:
-            page_md[pid].touch()  # invalidate bulk_pages.py's cached page
+    # images are embedded at conversion time; bulk_pages.py's cache key
+    # covers each page's entries, so changed images re-convert their pages
+    changed = sum(1 for u in set(old) | set(new) if old.get(u) != new.get(u))
     kinds = collections.Counter(k for _, k in new.values())
     print(f"export: {len(new)} files -> {MAP_TSV.relative_to(ROOT)} ("
           + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) + ")"
-          + (f"; {len(pages)} pages marked for re-conversion" if pages else ""))
+          + (f"; {changed} entries changed" if changed else ""))
 
 
 def status_report(con, cfg: Config):
@@ -1006,7 +990,7 @@ def main():
     print("config: " + " + ".join(str(p.relative_to(ROOT)) if p.is_relative_to(ROOT)
                                   else str(p) for p in cfg.files)
           + f" ({len(cfg.rules)} rules)")
-    page_md = scan(con)
+    scan(con)
     evaluate(con, cfg, args.retry)
     if args.status:
         status_report(con, cfg)
@@ -1017,7 +1001,7 @@ def main():
             run(con, cfg, jobs, args.limit)
         else:
             print("nothing to download")
-    export(con, cfg, page_md)
+    export(con, cfg)
 
 
 if __name__ == "__main__":

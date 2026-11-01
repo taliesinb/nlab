@@ -115,10 +115,10 @@ if [[ -d "$DEST" && $REFRESH == 0 ]]; then
     echo "using cached $DEST (pass --refresh to re-download)"
 else
     # download fully, then extract, then swap: a failed or interrupted
-    # fetch leaves the previous mirror in place. tar -m stamps files with
-    # the extraction time (GitHub archives carry the upstream commit time,
-    # which can predate our last build and hide changed pages from
-    # bulk_pages.py's mtime cache).
+    # fetch leaves the previous mirror in place. (tar -m: files get the
+    # extraction time rather than the upstream commit time; nothing here
+    # relies on mtimes any more - bulk_pages.py caches on content hashes -
+    # but it keeps them meaningful for anyone who does.)
     rm -rf "$DEST.tmp" "$DEST.tar.gz"
     mkdir -p "$DEST.tmp"
     echo "downloading ncatlab/nlab-content (a few hundred MB) ..."

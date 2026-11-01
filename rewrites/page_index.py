@@ -16,8 +16,9 @@ site publishes are indexed: those with a content.md, minus history
 subpages, placeholders and sandboxes (typst_site.skip_page), whose
 links would otherwise dangle in dist/html; they fall back to ncatlab.org.
 
-The file is rewritten only when its content changes, so its mtime can
-serve as a cache stamp for bulk_pages.py.
+The file is rewritten only when its content changes. (bulk_pages.py's
+conversion cache keys each page on how its own links resolve, so only
+pages whose links change are re-converted.)
 
 Usage: page_index.py
 """
