@@ -6,8 +6,8 @@ rewritten from <id>.html to ../<slug>/, shared assets/ + files/ +
 files-web/ at the root (hardlinked from the build tree), and a root
 index.html listing every page.
 
-Usage: html_site.py [--out DIR]
-Deploy: netlify deploy --prod --dir dist/html
+Usage: nlab assemble-site [--out DIR] [--no-search]
+Deploy: netlify deploy --prod --dir dist/html (or `nlab deploy-symbol`)
 """
 
 import argparse
@@ -16,27 +16,18 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from typst_site import load_names, skip_page, slugify  # noqa: E402
+from .conv import canonical_file_url as canonical_url
+from .paths import ASSETS, DIST, FILES, FILES_MAP, ROOT, TYP_PAGES, TYPST_CSS, WEBP_CACHE
+from .typst_site import load_names, skip_page, slugify
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-SRC = ROOT / "build/typ-pages"
+SRC = TYP_PAGES
 
 LINK_RE = re.compile(r'href="(\d+)\.html(#[^"]*)?"')
 IMG_RE = re.compile(r'(src=")(files(?:-web)?/)')
 EXT_HREF_RE = re.compile(r'href="((?:https?://|/nlab/)[^"]*)"')
-FILES_MAP = ROOT / "build/files.tsv"  # rewrites/downloads.py export
-
-
-def canonical_url(url: str) -> str:
-    """Same as rewrites/downloads.py (and nlab-typ's canonical_file_url)."""
-    u = url.strip()
-    if "/nlab/files/" in u:
-        name = re.split(r"[?#]", u.split("/nlab/files/", 1)[1], maxsplit=1)[0]
-        return "https://ncatlab.org/nlab/files/" + name
-    return u
 
 
 def load_files_map() -> dict[str, tuple[str, str]]:
@@ -259,12 +250,13 @@ if (q0) { inp.value = q0; run(q0); }
     )
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(ROOT / "dist/html"))
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="nlab assemble-site",
+                                 description="Lay out dist/html from build/typ-pages")
+    ap.add_argument("--out", default=str(DIST / "html"))
     ap.add_argument("--no-search", action="store_true",
                     help="skip the pagefind index build")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -340,28 +332,20 @@ def main():
 
     # shared assets and image stores (hardlinks: same content, no copy)
     (out / "assets").mkdir(exist_ok=True)
-    shutil.copy(
-        pathlib.Path(__file__).parent / "docset_shell.css",
-        out / "assets" / "nlab-typst.css",
-    )
-    shutil.copy(
-        pathlib.Path(__file__).parent / "nlab.js",
-        out / "assets" / "nlab.js",
-    )
-    typst_css = ROOT / "build/typ-assets/typst.css"
-    if typst_css.exists():
-        shutil.copy(typst_css, out / "assets" / "typst.css")
+    shutil.copy(ASSETS / "docset_shell.css", out / "assets" / "nlab-typst.css")
+    shutil.copy(ASSETS / "nlab.js", out / "assets" / "nlab.js")
+    if TYPST_CSS.exists():
+        shutil.copy(TYPST_CSS, out / "assets" / "typst.css")
     # publish exactly what the downloads export lists (a narrower preset
     # also narrows the site), and drop files from earlier runs
     published = {pathlib.PurePosixPath(p).name for p, _ in files.values()}
-    # webp re-encodes made by bulk_pages.py, for the published images
-    webps = {f"{n}.webp" for n in published
-             if (ROOT / "build/nlab-files-web" / f"{n}.webp").exists()}
-    for store, sub, names in (("build/files", "files", published),
-                              ("build/nlab-files-web", "files-web", webps)):
+    # webp re-encodes made by nlab.convert, for the published images
+    webps = {f"{n}.webp" for n in published if (WEBP_CACHE / f"{n}.webp").exists()}
+    for store, sub, names in ((FILES, "files", published),
+                              (WEBP_CACHE, "files-web", webps)):
         (out / sub).mkdir(exist_ok=True)
         for name in names:
-            src, dst = ROOT / store / name, out / sub / name
+            src, dst = store / name, out / sub / name
             if src.exists() and not dst.exists():
                 try:
                     os.link(src, dst)  # hardlink: same content, no copy
@@ -387,10 +371,10 @@ def main():
     print(f"{len(pages)} pages -> {out}")
 
     if not args.no_search:
-        import subprocess
+        # the pagefind package pinned in pyproject.toml (the custom search
+        # UI above drives pagefind.js's API); cwd for pagefind.yml
         subprocess.run(
-            # pinned: the custom search UI above drives pagefind.js's API
-            ["npx", "-y", "pagefind@1.5.2", "--site", str(out)],
+            [sys.executable, "-m", "pagefind", "--site", str(out)],
             check=True,
             cwd=str(ROOT),
         )

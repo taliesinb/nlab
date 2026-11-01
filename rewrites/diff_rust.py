@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Diff the Rust grid parser (crates/nlab-typ) against the Python one.
+"""Diff the Rust grid parser (crates/nlab-conv) against the Python one.
 
-Feeds every distinct diagram's decoded TeX through `nlab-typ grids` and
+Feeds every distinct diagram's decoded TeX through `nlab-conv grids` and
 compares both the status and the JSON grid with the `parsed` table.
 The Python implementation is the reference; any mismatch is a bug in the
 port (or an intentional divergence to be reviewed).
@@ -16,7 +16,7 @@ import subprocess
 import common
 import parse_arrays
 
-BINARY = common.HERE.parent / "crates/nlab-typ/target/release/nlab-typ"
+BINARY = common.HERE.parent / "crates/nlab-conv/target/release/nlab-conv"
 
 
 def decode_tex(mathml: str) -> str | None:

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Package the nLab content mirrors into a Dash docset.
 
-Usage: make_docset.py --html DIR --source DIR --assets DIR --out DIR
+Usage: nlab build-docset [--refresh] [--only NAMES] (fetches the inputs, then
+runs this); directly: python -m nlab.docset [--html DIR] [--source DIR]
+[--assets DIR] [--out DIR], each defaulting to its build/ location.
 
 Inputs:
   --html    checkout of ncatlab/nlab-content-html: pages/<d>/<d>/<d>/<d>/<id>/
@@ -431,12 +433,14 @@ def build_index(db_path: Path, entries) -> int:
     return n
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--html", type=Path, required=True)
-    ap.add_argument("--source", type=Path, required=True)
-    ap.add_argument("--assets", type=Path, required=True)
-    ap.add_argument("--out", type=Path, required=True)
+def main(argv=None) -> None:
+    from .paths import DIST, HTML_MIRROR, MIRROR, WEB_ASSETS
+    ap = argparse.ArgumentParser(prog="nlab.docset",
+                                 description="Package the mirrors into dist/nLab.docset")
+    ap.add_argument("--html", type=Path, default=HTML_MIRROR)
+    ap.add_argument("--source", type=Path, default=MIRROR)
+    ap.add_argument("--assets", type=Path, default=WEB_ASSETS)
+    ap.add_argument("--out", type=Path, default=DIST)
     ap.add_argument("--only", help="comma-separated page names; build a small "
                     "docset containing just these pages (links to other pages "
                     "fall back to ncatlab.org)")
@@ -446,9 +450,9 @@ def main() -> None:
                     "matching MathML mtables")
     ap.add_argument("--typst-pages", type=Path,
                     help="directory of <id>.html pages produced by "
-                    "rewrites/bulk_pages.py --html; used in place of the "
+                    "`nlab convert --html`; used in place of the "
                     "transformed mirror page when present")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if not (args.html / "pages").is_dir():
         sys.exit(f"error: {args.html} is not a nlab-content-html checkout")
@@ -498,18 +502,18 @@ def main() -> None:
         'div[style*="text-align: center"] > svg { zoom: 1.5; }\n',
         encoding="utf-8")
 
-    here = Path(__file__).resolve().parent
-    shutil.copy(here / "icons" / "logo.svg", documents / "assets" / "logo.svg")
+    from .paths import ASSETS, ROOT
+    shutil.copy(ROOT / "icons" / "logo.svg", documents / "assets" / "logo.svg")
 
     if args.typst_pages:
         # shared stylesheets + image stores for the typst-rendered pages
         typst_css = args.typst_pages.parent / "typ-assets" / "typst.css"
         if typst_css.exists():
             shutil.copy(typst_css, documents / "assets" / "typst.css")
-        shutil.copy(here / "rewrites" / "docset_shell.css",
+        shutil.copy(ASSETS / "docset_shell.css",
                     documents / "assets" / "nlab-typst.css")
-        # image stores: build/files (content-addressed, rewrites/
-        # downloads.py) and its webp re-encodes
+        # image stores: build/files (content-addressed, nlab.downloads)
+        # and its webp re-encodes
         for store, name in (("files", "files"), ("nlab-files-web", "files-web")):
             src = args.typst_pages.parent / store
             if src.is_dir():
@@ -611,9 +615,8 @@ def main() -> None:
     with open(docset / "Contents" / "Info.plist", "wb") as f:
         plistlib.dump(plist, f)
 
-    here = Path(__file__).resolve().parent
     for icon in ("icon.png", "icon@2x.png"):
-        src = here / "icons" / icon
+        src = ROOT / "icons" / icon
         if src.exists():
             shutil.copy(src, docset / icon)
 

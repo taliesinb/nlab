@@ -35,14 +35,13 @@ pub(crate) fn localize_calls(code: String) -> String {
     code.replace("#mitex(", "#mitex-itex(").replace("mi(", "mi-itex(")
 }
 
-/// With NLAB_LOCAL_MITEX=1, emit against the locally built mitex package
-/// (fork branch `nlab`), whose fixes make several fix_tex workarounds
-/// unnecessary: the circled-operator/set-operator unicode substitutions,
-/// \mathscr -> \mathcal, \mathsf -> \textsf, and the plain (non-pair)
-/// \underoverset translation.
+/// In local-mitex mode (see context.rs) emit against the locally built
+/// mitex package (fork branch `nlab`), whose fixes make several fix_tex
+/// workarounds unnecessary: the circled-operator/set-operator unicode
+/// substitutions, \mathscr -> \mathcal, \mathsf -> \textsf, and the
+/// plain (non-pair) \underoverset translation.
 fn local_mitex() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("NLAB_LOCAL_MITEX").is_ok_and(|v| v == "1"))
+    crate::context::local_mitex()
 }
 
 fn preamble() -> &'static str {

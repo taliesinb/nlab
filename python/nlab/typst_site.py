@@ -7,7 +7,7 @@ get -<id> appended. Image references resolve through a per-file symlink
 tree (with extensions corrected to match magic bytes, since typst picks
 its decoder by extension), and _index.typ lists every page.
 
-Usage: typst_site.py [--out DIR]
+Usage: nlab build-typst-site [--out DIR]
 """
 
 import argparse
@@ -16,9 +16,10 @@ import re
 import shutil
 import unicodedata
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-SRC = ROOT / "build/typ-pages"
-FILES_ROOT = ROOT / "build/files"  # content-addressed store (downloads.py)
+from .paths import ASSETS, DIST, PAGES, TYP_PAGES, TYPST_CSS
+from .paths import FILES as FILES_ROOT  # content-addressed store (nlab.downloads)
+
+SRC = TYP_PAGES
 
 
 def slugify(name: str) -> str:
@@ -35,7 +36,7 @@ def load_names() -> dict[str, str]:
     """Canonical page names (page-index.tsv also lists redirect
     aliases, which must not steal a page's slug)."""
     names = {}
-    for f in (ROOT / "build/nlab-content/pages").glob("*/*/*/*/*/name"):
+    for f in PAGES.glob("*/*/*/*/*/name"):
         names[f.parent.name] = f.read_text(encoding="utf-8").strip()
     return names
 
@@ -54,16 +55,17 @@ def markup_escape(t: str) -> str:
     return re.sub(r"([\\#$\[\]*_`<>@])", r"\\\1", t)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(ROOT / "dist/typst"))
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="nlab build-typst-site",
+                                 description="Emit dist/typst: slug-named .typ pages")
+    ap.add_argument("--out", default=str(DIST / "typst"))
     ap.add_argument(
         "--link-base", default="../",
         help="prefix for cross-page links (default '../' for slug-dir routing)")
     ap.add_argument(
         "--link-ext", default="/",
         help="suffix for cross-page links (default '/'; use '.html' for flat files)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -170,13 +172,9 @@ def main():
     # static stylesheets for HTML rendering of these pages
     assets = out / "assets"
     assets.mkdir(exist_ok=True)
-    shutil.copy(
-        pathlib.Path(__file__).parent / "docset_shell.css",
-        assets / "nlab-typst.css",
-    )
-    typst_css = ROOT / "build/typ-assets/typst.css"
-    if typst_css.exists():
-        shutil.copy(typst_css, assets / "typst.css")
+    shutil.copy(ASSETS / "docset_shell.css", assets / "nlab-typst.css")
+    if TYPST_CSS.exists():
+        shutil.copy(TYPST_CSS, assets / "typst.css")
     print(f"{len(rows)} pages -> {out}")
 
 

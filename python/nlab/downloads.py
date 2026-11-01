@@ -20,7 +20,7 @@ where kind is sniffed from the bytes (png/jpg/gif/webp/svg/pdf), never
 taken from the URL or Content-Type: ncatlab.org answers a missing upload
 with 200 + an HTML page.
 
-rewrites/bulk_pages.py keys each page's conversion on the files.tsv
+nlab.convert keys each page's conversion on the files.tsv
 entries of the images it references, so a changed export re-converts
 exactly the affected pages.
 
@@ -29,7 +29,7 @@ downloads/*.json and README.md. `extends` (path or list, relative to the
 file) loads parents first; their rules come first. --config may be given
 several times; files are concatenated in order (each loaded once).
 
-Usage: downloads.py [--config FILE ...] [--status] [--limit N]
+Usage: nlab download [--config FILE ...] [--status] [--limit N]
                     [--rule NAME ...] [--retry] [--recheck] [--no-fetch]
 """
 
@@ -56,13 +56,13 @@ import urllib.parse
 import urllib.request
 import urllib.robotparser
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAGES = ROOT / "build/nlab-content/pages"
-STATE_DB = ROOT / "build/state.db"
-STORE = ROOT / "build/files"  # published (as dist/html/files/) via files.tsv
-MAP_TSV = ROOT / "build/files.tsv"  # read by nlab-typ (NLAB_FILES_MAP)
-TMP = ROOT / "build/.downloads-tmp"  # same filesystem as STORE: atomic rename
-DEFAULT_CONFIG = ROOT / "downloads/ncatlab.json"
+from . import conv
+from .paths import BUILD, DOWNLOAD_PRESETS, FILES, FILES_MAP, PAGES, ROOT, STATE_DB
+
+STORE = FILES  # published (as dist/html/files/) via files.tsv
+MAP_TSV = FILES_MAP  # read by nlab.conv (Converter files_map)
+TMP = BUILD / ".downloads-tmp"  # same filesystem as STORE: atomic rename
+DEFAULT_CONFIG = DOWNLOAD_PRESETS / "ncatlab.json"
 
 KIND_GROUPS = {
     "image": {"png", "jpg", "gif", "webp", "svg"},
@@ -245,15 +245,8 @@ IMGFILE_RE = re.compile(r'"file_name"\s*:\s*"([^"]+)"')
 NLAB_FILES = "https://ncatlab.org/nlab/files/"
 
 
-def canonical_url(url: str) -> str:
-    """Map key; must match canonical_file_url in crates/nlab-typ/src/prose.rs.
-    nLab uploads (absolute, relative, http or https) become
-    https://ncatlab.org/nlab/files/<name>; other URLs stay as written."""
-    u = url.strip()
-    if "/nlab/files/" in u:
-        name = re.split(r"[?#]", u.split("/nlab/files/", 1)[1], maxsplit=1)[0]
-        return NLAB_FILES + name
-    return u
+# Map key: the converter's own function, so the two can never disagree.
+canonical_url = conv.canonical_file_url
 
 
 def urls_in(text: str) -> set[str]:
@@ -264,7 +257,7 @@ def urls_in(text: str) -> set[str]:
             u = u.rstrip(")")
         out.add(canonical_url(u))
     out |= {canonical_url(u) for u in REL_RE.findall(text)}
-    # same URL forms nlab-typ emits for these (spaces become '+')
+    # same URL forms nlab.conv emits for these (spaces become '+')
     out |= {NLAB_FILES + n.strip().replace(" ", "+")
             for n in WIKIFILE_RE.findall(text)}
     out |= {NLAB_FILES + n.strip().replace(" ", "+")
@@ -928,7 +921,7 @@ def export(con, cfg: Config):
         tmp = MAP_TSV.with_suffix(".tsv.part")
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(MAP_TSV)
-    # images are embedded at conversion time; bulk_pages.py's cache key
+    # images are embedded at conversion time; nlab.convert's cache key
     # covers each page's entries, so changed images re-convert their pages
     changed = sum(1 for u in set(old) | set(new) if old.get(u) != new.get(u))
     kinds = collections.Counter(k for _, k in new.values())
@@ -952,8 +945,9 @@ def status_report(con, cfg: Config):
 
 # --------------------------------------------------------------- main
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="nlab download",
+                                 description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", action="append", type=pathlib.Path,
                     help=f"rules file (repeatable; default {DEFAULT_CONFIG.relative_to(ROOT)})")
     ap.add_argument("--status", action="store_true",
@@ -967,7 +961,7 @@ def main():
                     help="requeue missing/refused/rejected/too-large/blocked/failed")
     ap.add_argument("--recheck", action="store_true",
                     help="revalidate downloaded files (If-None-Match/If-Modified-Since)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     cfg = Config(args.config or [DEFAULT_CONFIG])
     unknown = set(args.rule) - set(cfg.by_name)
@@ -979,7 +973,7 @@ def main():
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        raise SystemExit("error: another downloads.py is running")
+        raise SystemExit("error: another `nlab download` is running")
     shutil.rmtree(TMP, ignore_errors=True)
 
     def on_term(signum, frame):  # `kill` stops as gracefully as Ctrl-C

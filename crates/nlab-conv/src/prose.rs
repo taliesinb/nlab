@@ -208,34 +208,11 @@ fn extract_images(src: &str, stash: &mut Stash) -> String {
         .to_string()
 }
 
-/// Downloaded files, from the TSV named by NLAB_FILES_MAP (written by
-/// rewrites/downloads.py): canonical URL, tab, store path
-/// (`files/<hash>.<ext>`), tab, kind (png/jpg/gif/webp/svg/pdf).
-fn files_map() -> &'static std::collections::HashMap<String, (String, String)> {
-    static MAP: std::sync::OnceLock<std::collections::HashMap<String, (String, String)>> =
-        std::sync::OnceLock::new();
-    MAP.get_or_init(|| {
-        let mut m = std::collections::HashMap::new();
-        if let Ok(path) = std::env::var("NLAB_FILES_MAP") {
-            if let Ok(txt) = std::fs::read_to_string(path) {
-                for line in txt.lines() {
-                    let mut cols = line.split('\t');
-                    if let (Some(url), Some(stored), Some(kind)) =
-                        (cols.next(), cols.next(), cols.next())
-                    {
-                        m.insert(url.to_string(), (stored.to_string(), kind.to_string()));
-                    }
-                }
-            }
-        }
-        m
-    })
-}
-
-/// Map key for a file URL; must match `canonical_url` in
-/// rewrites/downloads.py. nLab uploads (absolute, relative, http or
-/// https) all become https://ncatlab.org/nlab/files/<name>.
-fn canonical_file_url(url: &str) -> String {
+/// Key of a file URL in the downloads map (build/files.tsv); the Python
+/// side calls this same function (nlab.conv.canonical_file_url). nLab
+/// uploads (absolute, relative, http or https) all become
+/// https://ncatlab.org/nlab/files/<name>; other URLs stay as written.
+pub fn canonical_file_url(url: &str) -> String {
     let u = url.trim();
     if let Some((_, rest)) = u.split_once("/nlab/files/") {
         let name = rest.split(|c| c == '?' || c == '#').next().unwrap_or(rest);
@@ -246,10 +223,9 @@ fn canonical_file_url(url: &str) -> String {
 
 /// Store path of a downloaded *image* for this URL, if any.
 fn local_image(url: &str) -> Option<String> {
-    files_map()
-        .get(&canonical_file_url(url))
+    crate::context::lookup_file(&canonical_file_url(url))
         .filter(|(_, kind)| kind != "pdf")
-        .map(|(stored, _)| stored.clone())
+        .map(|(stored, _)| stored)
 }
 
 /// Escape caption text for typst, but keep `[text](url)` links live.
@@ -300,28 +276,6 @@ fn image_typst(url: &str, caption_html: &str) -> String {
         };
         format!("#link(\"{}\")[{}];", url, text)
     }
-}
-
-/// Page-name -> id lookup for in-docset links, loaded from the TSV
-/// named by NLAB_PAGEIDX (name or redirect, tab, page id). Lookups are
-/// case-insensitive like the wiki's.
-fn page_index() -> &'static std::collections::HashMap<String, String> {
-    static IDX: std::sync::OnceLock<std::collections::HashMap<String, String>> =
-        std::sync::OnceLock::new();
-    IDX.get_or_init(|| {
-        let mut m = std::collections::HashMap::new();
-        if let Ok(path) = std::env::var("NLAB_PAGEIDX") {
-            if let Ok(txt) = std::fs::read_to_string(path) {
-                for line in txt.lines() {
-                    if let Some((name, id)) = line.split_once('\t') {
-                        m.entry(name.trim().to_lowercase())
-                            .or_insert_with(|| id.trim().to_string());
-                    }
-                }
-            }
-        }
-        m
-    })
 }
 
 fn wiki_target_url(name: &str) -> String {
@@ -383,7 +337,7 @@ fn extract_wiki(src: &str, stash: &mut Stash) -> String {
                 escape_typst(text)
             ), whole.clone());
         }
-        if let Some(id) = page_index().get(&target.trim().to_lowercase()) {
+        if let Some(id) = crate::context::lookup_page(target) {
             return stash.put_src(format!(
                 "#nlab-page(\"{}\")[{}];",
                 id,

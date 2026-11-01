@@ -20,7 +20,7 @@ import concurrent.futures
 
 HERE = pathlib.Path(__file__).resolve().parent
 BUILD = HERE.parent / "build"
-BINARY = HERE.parent / "crates/nlab-typ/target/release/nlab-typ"
+BINARY = HERE.parent / "crates/nlab-conv/target/release/nlab-conv"
 CACHE = HERE / "out/tikzcache"
 OUT = HERE / "out/compare-tikzcd.html"
 

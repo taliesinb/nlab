@@ -6,7 +6,7 @@ The site renders tikzcd, xymatrix and tikzpicture blocks server-side
 into SVGs, in document order. We collect ALL such blocks per page (so
 the nth block pairs with the nth non-logo SVG when the counts agree),
 then build one gallery per requested kind, rendering our version by
-pushing the raw block through the full `nlab-typ page` pipeline.
+pushing the raw block through the full `nlab-conv page` pipeline.
 
 Usage: compare_pics.py --kind xymatrix|tikzpicture [--rows i,j] [--all]
 """
@@ -21,7 +21,7 @@ import concurrent.futures
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"
-BINARY = ROOT / "crates/nlab-typ/target/release/nlab-typ"
+BINARY = ROOT / "crates/nlab-conv/target/release/nlab-conv"
 CACHE = HERE / "out/piccache"
 
 BLOCK_RE = re.compile(

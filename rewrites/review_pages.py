@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Visual review sheet for batch-converted prose pages.
 
-Converts a sample of pages with `nlab-typ page`, compiles each to PDF
+Converts a sample of pages with `nlab-conv page`, compiles each to PDF
 and PNGs (first N pages), and writes out/review-pages.html: a numbered
 contact sheet with links to the full PDFs (out/pages/<id>.pdf).
 
@@ -16,7 +16,7 @@ import concurrent.futures
 
 HERE = pathlib.Path(__file__).resolve().parent
 BUILD = HERE.parent / "build/nlab-content/pages"
-BIN = HERE.parent / "crates/nlab-typ/target/release/nlab-typ"
+BIN = HERE.parent / "crates/nlab-conv/target/release/nlab-conv"
 OUTDIR = HERE / "out/pages"
 OUT = HERE / "out/review-pages.html"
 PREVIEW_PAGES = 3

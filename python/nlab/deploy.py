@@ -7,7 +7,7 @@ merges them into the site). Subsequent runs diff local blake3 hashes
 against GET /<site>/FILES and PUT only changed or new files.
 
 Usage:
-  symbol_deploy.py [--site nlab] [--dir dist/html] [--full] [--dry-run]
+  nlab deploy-symbol [--site nlab] [--dir dist/html] [--full] [--dry-run]
 
 The root index.html for symbol (no Netlify _redirects) is generated
 here as a redirect to search.html.
@@ -24,7 +24,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+import blake3
+
+from .paths import DIST
+
 SERVER = "http://SYMBOL-HOST"
 CHUNK_EXTRACTED = 16 * 1024 * 1024
 
@@ -62,17 +65,12 @@ def remote_manifest(site: str) -> dict[str, str] | None:
 
 
 def local_hashes(paths: list[pathlib.Path], base: pathlib.Path) -> dict[str, str]:
-    """blake3 of every file via b3sum (batched)."""
+    """blake3 of every file, in the server's `blake3:<hex>` form."""
     hashes: dict[str, str] = {}
-    batch = 512
-    for i in range(0, len(paths), batch):
-        chunk = paths[i:i + batch]
-        out = subprocess.run(
-            ["b3sum", "--no-names", *[str(p) for p in chunk]],
-            capture_output=True, text=True, check=True,
-        )
-        for p, line in zip(chunk, out.stdout.splitlines()):
-            hashes[p.relative_to(base).as_posix()] = "blake3:" + line.strip()
+    for p in paths:
+        h = blake3.blake3(max_threads=blake3.blake3.AUTO)
+        h.update_mmap(p)
+        hashes[p.relative_to(base).as_posix()] = "blake3:" + h.hexdigest()
     return hashes
 
 
@@ -139,14 +137,15 @@ def push_tar(site: str, members: list[tuple[str, pathlib.Path]], n, total):
             time.sleep(3)
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="nlab deploy-symbol",
+                                 description="Upload dist/html to http://SYMBOL-HOST/<site>/")
     ap.add_argument("--site", default="nlab")
-    ap.add_argument("--dir", default=str(ROOT / "dist/html"))
+    ap.add_argument("--dir", default=str(DIST / "html"))
     ap.add_argument("--full", action="store_true",
                     help="upload everything, skip the remote diff")
     ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     base = pathlib.Path(args.dir)
 
     # symbol has no _redirects support: real root index instead

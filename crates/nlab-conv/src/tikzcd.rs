@@ -1296,10 +1296,13 @@ fn measure_nodes(labels_ts: &[String]) -> Option<Vec<(f64, f64)>> {
     doc.push_str(
         "  )\n  [#metadata(ms.map(s => (s.width.pt(), s.height.pt())))<m>]\n}\n",
     );
+    // unique per call: many threads of one process (nlab.conv) measure at
+    // once, so the pid alone no longer separates them
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
         "nlab-measure-{}-{}.typ",
         std::process::id(),
-        labels_ts.len()
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::write(&path, doc).ok()?;
     let out = std::process::Command::new("typst")
@@ -1610,7 +1613,9 @@ pub(crate) fn tikzcd_to_fletcher(src: &str) -> Result<(String, Vec<String>), Str
             }
             cs
         };
-        let mut extra: std::collections::HashMap<i32, f64> = std::collections::HashMap::new();
+        // ordered: spacer nodes are emitted by iterating this map, and a
+        // HashMap's random order made the output differ run to run
+        let mut extra: std::collections::BTreeMap<i32, f64> = std::collections::BTreeMap::new();
         let mut extra_row: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
         for a in &arrows {
             let (Coord::Cell(r1, c1), Coord::Cell(r2, c2)) = (&a.from, &a.to) else {

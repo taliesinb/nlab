@@ -1,0 +1,29 @@
+[package]
+name = "nlab-conv"
+description = "Convert nLab wiki source (Instiki Markdown + itex math; array, tikz-cd, xymatrix and tikzpicture diagrams) to typst"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "nlab_conv"
+# rlib for the CLI binary, cdylib for the Python module (maturin builds it
+# with the `python` feature as nlab._conv; see pyproject.toml)
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "nlab-conv"
+path = "src/main.rs"
+
+[features]
+python = ["dep:pyo3"]
+
+[dependencies]
+# Our mitex fork (github.com/taliesinb/mitex, branch nlab), pinned as the
+# git submodule vendor/mitex: `git submodule update --init` after cloning.
+mitex = { path = "../../vendor/mitex/crates/mitex" }
+mitex-parser = { path = "../../vendor/mitex/crates/mitex-parser" }
+mitex-spec-gen = { path = "../../vendor/mitex/crates/mitex-spec-gen" }
+rowan = "0.15.15"
+regex = "1"
+pulldown-cmark = { version = "0.12", default-features = false }
+pyo3 = { version = "0.30", features = ["abi3-py315"], optional = true }

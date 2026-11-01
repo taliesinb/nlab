@@ -6,13 +6,14 @@ mathematical physics — into an offline, instantly-searchable **Dash docset**,
 and (the main output nowadays) a fully independent **static HTML site**.
 
 The static site re-renders every page from its Markdown+itex source through
-[typst](https://typst.app) (`crates/nlab-typ` converts the wiki dialect,
-including tikzcd / xymatrix / tikzpicture / array diagrams, to typst; typst's
-HTML export emits MathML math and inline-SVG diagrams), with in-site
-cross-links, dark mode, and client-side full-text search via
-[Pagefind](https://pagefind.app). See [Building the static HTML
-site](#building-the-static-html-site); the rest of this section describes the
-docset.
+[typst](https://typst.app) (the Rust crate `crates/nlab-conv`, exposed to
+Python as `nlab.conv`, converts the wiki dialect, including tikzcd /
+xymatrix / tikzpicture / array diagrams, to typst; typst's HTML export emits
+MathML math and inline-SVG diagrams), with in-site cross-links, dark mode,
+and client-side full-text search via [Pagefind](https://pagefind.app).
+Everything is driven by one command, `uv run nlab ...`; see [Building the
+static HTML site](#building-the-static-html-site). The rest of this section
+describes the docset.
 
 [Dash](https://kapeli.com/dash) is a macOS documentation browser: it stores
 "docsets" (self-contained bundles of HTML plus a SQLite search index) fully
@@ -39,8 +40,8 @@ publishes:
 
 ## What the recipe adds
 
-Beyond mechanically repackaging ~20,700 pages, `make_docset.py` does a fair
-amount of curation:
+Beyond mechanically repackaging ~20,700 pages, `nlab build-docset` does a
+fair amount of curation:
 
 - **Native math, no MathJax.** nLab pages ship MathML, which the WebKit view
   inside Dash renders natively. The nLab's own theorem/section numbering
@@ -85,103 +86,111 @@ The result: ~46,000 searchable names over 20,146 indexed pages.
 ## Building the static HTML site
 
 ```sh
-./build_site.sh             # everything, from a clean checkout -> dist/html
-./build_site.sh --refresh   # re-download the wiki mirror first
-./build_site.sh --downloads downloads/common.json   # also fetch arXiv etc.
+git clone --recursive https://github.com/taliesinb/ncatlab-dash && cd ncatlab-dash
+uv run nlab build-site             # everything -> dist/html
+uv run nlab build-site --refresh   # re-download the wiki mirror first
+uv run nlab build-site --downloads downloads/common.json   # also fetch arXiv etc.
 ```
 
-Every step is cached, so reruns only redo what changed. Preview with
+`uv run` creates the environment, installs the Python dependencies and
+compiles the converter (`nlab._conv`, a PyO3 extension built by maturin)
+first; it rebuilds the extension by itself whenever the Rust changes. Every
+step is cached, so reruns only redo what changed. Preview with
 `python3 -m http.server -d dist/html 8000` and open
 <http://localhost:8000/search.html>. Pages live at `dist/html/<slug>/`
-(lowercased, hyphenated page names), ~20,000 of them, ~1.2 GB with the search
-index.
+(lowercased, hyphenated page names), ~20,000 of them, ~3 GB with the
+downloaded files and the search index.
 
 ### Requirements
 
-macOS or Linux, network access (GitHub, ncatlab.org, the typst package
-registry, npm), and:
+macOS or Linux, network access (GitHub, ncatlab.org, PyPI, the typst package
+registry), and:
 
 | tool | used for | known-good version |
 |---|---|---|
-| Rust toolchain + `wasm32-unknown-unknown` target | `nlab-typ`, the mitex typst plugin | rustc 1.94 |
+| [uv](https://docs.astral.sh/uv/) | the environment; Python 3.15 and the Python dependencies (Pillow, Pagefind, blake3) come from `pyproject.toml` | 0.13 |
+| Rust via rustup | the converter and the mitex typst plugin; `rust-toolchain.toml` selects **stable** and the wasm target whatever your default is | rustc 1.99 |
 | [typst](https://github.com/typst/typst) CLI | page compilation (HTML export) | **0.15.1** |
-| `svgo` | minifying inline diagram SVGs | 4.0.2 |
-| `cwebp` (libwebp) | re-encoding uploaded images | 1.6.0 |
-| Node.js / `npx` | Pagefind search index (fetched by `npx`) | node 26, pagefind 1.5.2 |
-| git, curl, tar, Python 3 | everything else | Python 3.15 |
-| Pillow (optional) | line-art detection so diagrams invert in dark mode | |
+| `svgo` | minifying inline diagram SVGs | 4.1 |
+| git | the `vendor/mitex` submodule | |
 
-When rustup is present, `build_site.sh` builds with the **stable** toolchain
-whatever your default is (installing it and the wasm target if needed).
-
-On macOS: `brew install rustup typst svgo webp node && rustup-init -y &&
-rustup target add wasm32-unknown-unknown` (and optionally
-`pip3 install pillow`). typst packages `@preview/fletcher:0.5.8` and
-`@preview/cetz:0.3.4` download automatically on first compile.
+On macOS: `brew install uv rustup typst svgo && rustup-init -y`. The typst
+packages `@preview/fletcher:0.5.8` and `@preview/cetz:0.3.4` download
+automatically on first compile. `uv run nlab setup` checks all of this.
 
 The typst HTML export is still experimental (`--features html`) and its
 output changes between typst releases; other versions than 0.15.x may work but
 are untested.
 
-### What `build_site.sh` does
+### Layout
 
-In order (each step can also be run by hand):
+| path | what |
+|---|---|
+| `python/nlab/` | the `nlab` package: one module per stage, `cli.py` the entry point |
+| `crates/nlab-conv/` | the converter (Rust); `nlab.conv` in Python, also a CLI binary `nlab-conv` |
+| `vendor/mitex/` | our mitex fork (submodule): math conversion, and the `@local/mitex` typst package |
+| `downloads/` | download rule presets |
+| `edits/` | pointwise corrections to upstream page sources |
+| `tests/` | `uv run pytest` |
+| `rewrites/` | research tools from the diagram-rewrite work (galleries, comparisons); not part of the build |
+| `build/`, `dist/` | everything generated (gitignored); shared state in `build/state.db` |
 
-1. **mitex fork.** Math goes through a fork of
-   [mitex](https://github.com/taliesinb/mitex) (branch `nlab`, carrying
-   itex-compatibility fixes), pinned as the git submodule `vendor/mitex`.
-   `crates/nlab-typ/Cargo.toml` links its crates by path. The submodule is
-   initialized if needed (or clone with `git clone --recursive`), its wasm
-   plugin is built, and the package is installed as the local typst package
-   `@local/mitex:0.2.7` (see [crates/nlab-typ/README.md](crates/nlab-typ/README.md)).
-2. **Converter.** `cargo build --release --manifest-path
-   crates/nlab-typ/Cargo.toml`.
-3. **Mirror.** Downloads [ncatlab/nlab-content](https://github.com/ncatlab/nlab-content)
-   (the Markdown+itex sources) to `build/nlab-content`. The HTML mirror
-   `build.sh` also fetches is only needed for the docset.
-4. **Page index.** `rewrites/page_index.py` writes `build/page-index.tsv`
-   (every page name and `[[!redirects]]` alias → page id). Without it the
-   converter cannot resolve wiki links and *silently* points every one of them
-   at ncatlab.org.
-5. **Downloads.** `rewrites/downloads.py --config downloads/ncatlab.json`
-   fetches the files pages reference (see [Downloads](#downloads) below) into
-   `build/files/` and writes `build/files.tsv`. Must run *before* step 6: the
-   converter embeds only images listed there and turns the rest into links;
-   step 6 re-converts exactly the pages whose images changed.
-6. **Pages.** `rewrites/bulk_pages.py --html --jobs N` converts each
-   `content.md` (after applying the corrections in `edits/`) with `nlab-typ`,
-   compiles it with typst's HTML export, and post-processes it into
-   `build/typ-pages/<id>.html` (shared stylesheets, svgo-minified SVGs, webp
+### What `nlab build-site` does
+
+In order (`uv run nlab --help` lists the commands; each step is also its own
+command):
+
+1. **`nlab setup`.** Checks the tools, initializes the `vendor/mitex`
+   submodule if needed (our [mitex fork](https://github.com/taliesinb/mitex),
+   branch `nlab`, carrying itex-compatibility fixes; the converter links its
+   crates by path), builds its wasm plugin and installs it as the local typst
+   package `@local/mitex:0.2.7` (see [crates/nlab-conv/README.md](crates/nlab-conv/README.md)).
+2. **`nlab fetch`.** Downloads [ncatlab/nlab-content](https://github.com/ncatlab/nlab-content)
+   (the Markdown+itex sources) to `build/nlab-content`.
+3. **`nlab page-index`.** Writes `build/page-index.tsv` (every page name and
+   `[[!redirects]]` alias → page id). Without it the converter cannot resolve
+   wiki links and *silently* points every one of them at ncatlab.org.
+4. **`nlab download`.** Fetches the files pages reference (see
+   [Downloads](#downloads) below) into `build/files/` and writes
+   `build/files.tsv`. Must run *before* step 5: the converter embeds only
+   images listed there and turns the rest into links; step 5 re-converts
+   exactly the pages whose images changed.
+5. **`nlab convert --html`.** Converts each `content.md` (after applying the
+   corrections in `edits/`) in-process with `nlab.conv` (worker threads in
+   parallel), compiles it with typst's HTML export, and post-processes it into
+   `build/typ-pages/<id>.html` (shared stylesheets, svgo-minified SVGs, WebP
    images). A cold full run takes about an hour on a 10-core M4, most of it
    one `svgo` process per distinct diagram (~53,000, cached in
-   `build/svgmin`). Results are cached in `build/state.db`: each page is keyed on a
-   hash of its source (after `edits/`), its title, how each of its
-   `[[links]]` resolves in the page index, the `files.tsv` entries of its
-   images, and the tools (converter binary, mitex package, typst version,
-   this script). So a rerun converts only pages whose inputs changed; a new
-   redirect alias, say, re-converts just the pages whose links it changes.
-   Failures are cached too; `--retry-failed` tries them again, `--force`
-   ignores the cache, and `--pages ID,ID` converts specific pages.
-   Interrupting is safe. Failures are listed in `rewrites/out/bulk-report.txt`; on the
-   August 2026 mirror the run was 20,723/20,723 clean, but newer wiki content
-   may introduce new failures (failed pages are simply absent from the site).
-   `nlab-typ` itself also invokes `typst query` (with the mitex package) to
-   measure tikzcd node sizes, falling back to estimates if that fails.
-7. **Site.** `rewrites/html_site.py` lays out `dist/html/<slug>/index.html`,
+   `build/svgmin`); the conversion itself takes under two minutes. Results
+   are cached in `build/state.db`: each page is keyed on a hash of its source
+   (after `edits/`), its title, how each of its `[[links]]` resolves in the
+   page index, the `files.tsv` entries of its images, and the tools (the
+   converter extension, mitex package, typst version, `convert.py`). So a
+   rerun converts only pages whose inputs changed; a new redirect alias, say,
+   re-converts just the pages whose links it changes. Failures are cached
+   too; `--retry-failed` tries them again, `--force` ignores the cache, and
+   `--pages ID,ID` converts specific pages. Interrupting is safe. Failures
+   are listed in `build/convert-report.txt` and by `nlab status`.
+6. **`nlab assemble-site`.** Lays out `dist/html/<slug>/index.html`,
    rewrites cross-links to slugs, points links to downloaded PDFs at the local
    copy (keeping the original as `data-original-url`), publishes exactly the
    files `build/files.tsv` lists, writes `search.html`, and runs Pagefind
    (configured by `pagefind.yml`). History subpages, placeholders and
    sandboxes are left out.
 
-To work on a single page: `NLAB_PAGEIDX=build/page-index.tsv
-NLAB_FILES_MAP=build/files.tsv crates/nlab-typ/target/release/nlab-typ page
-"<page name>" < build/nlab-content/pages/…/<id>/content.md > page.typ` — the
-source is read from **stdin** (a path argument silently yields an empty page).
+To look at one page's typst: `uv run nlab convert-page "Yoneda lemma"` (a page
+name or id; `-` reads stdin), with the same page index and downloads map the
+build uses. In Python:
+
+```python
+from nlab import conv
+c = conv.Converter(page_index="build/page-index.tsv", files_map="build/files.tsv")
+typ = c.page(source, title="Yoneda lemma")
+```
 
 ### Downloads
 
-Pages reference ~65,000 distinct URLs. `rewrites/downloads.py` scans them all
+Pages reference ~65,000 distinct URLs. `nlab download` scans them all
 into `build/state.db` (SQLite) on every run, decides per URL from a JSON rules
 file what may be downloaded, and fetches the queue with a thread pool that is
 rate-limited **per host**. Three presets in `downloads/`, each extending the
@@ -210,7 +219,8 @@ files with `If-None-Match` / `If-Modified-Since`).
 the URL or `Content-Type`. ncatlab.org answers a missing upload with `200`
 and an HTML page, and some uploads have the wrong extension. Identical files
 are stored once. `build/files.tsv` (canonical URL, store path, kind) is what
-`nlab-typ` (`NLAB_FILES_MAP`) and `html_site.py` read.
+the converter and `nlab assemble-site` read; URLs are canonicalized by one
+function, in Rust (`nlab.conv.canonical_file_url`).
 
 **Rules.** A config file is an object with optional `extends` (a path or a
 list of paths, relative to the file, loaded first), `global` and `rules`.
@@ -249,38 +259,29 @@ database across runs.
 
 - Netlify: `netlify deploy --prod --dir dist/html` (`_redirects` sends `/` to
   `search.html`).
+- A symbol static host: `uv run nlab deploy-symbol` (hash-diffed
+  incremental uploads).
 - Any plain static host works, as all links are relative; give it a root
-  `index.html` that redirects to `search.html` (as
-  `rewrites/symbol_deploy.py` does for its host).
+  `index.html` that redirects to `search.html` (as `deploy-symbol` does).
 
-`rewrites/typst_site.py` emits the same pages as slug-named `.typ` sources
-(`dist/typst`) for browsing typst directly.
+`uv run nlab build-typst-site` emits the same pages as slug-named `.typ`
+sources (`dist/typst`) for browsing typst directly.
 
 ## Building the Dash docset
 
-Requirements: macOS or Linux with `curl`, `tar`, and Python 3 (stdlib only).
-
 ```sh
-./build.sh              # first run downloads the mirrors (~150 MB archives,
-                        # ~1.5 GB unpacked into build/), then packages
-./build.sh --refresh    # re-download mirrors and assets to pick up new content
+uv run nlab build-docset             # fetches both mirrors (~1.5 GB unpacked
+                                     # into build/) and the live site's CSS/JS
+uv run nlab build-docset --refresh   # re-download them to pick up new content
+uv run nlab build-docset --only "pullback,Yoneda lemma" --out dist-mini  # quick
 ```
 
-This produces `dist/nLab.docset` (~530 MB). If `build/typ-pages` exists (step 6
-above), its typst-rendered pages replace the transformed mirror pages. Install it by double-clicking, or
-via Dash → Settings → Docsets → `+` → Add Local Docset. Dash spends a few
-minutes full-text-indexing on first install. Search with the `nlab:` keyword
-(e.g. `nlab:yoneda`).
-
-For iterating on the pipeline there is a fast path that builds a small docset
-from named pages only:
-
-```sh
-python3 make_docset.py \
-    --html build/nlab-content-html --source build/nlab-content \
-    --assets build/assets --out dist-mini \
-    --only "pullback,Yoneda lemma,adjoint functor"
-```
+This produces `dist/nLab.docset` (~530 MB). If `build/typ-pages` exists (from
+`nlab build-site`), its typst-rendered pages replace the transformed mirror
+pages (`--no-typst-pages` to opt out). Install it by double-clicking, or via
+Dash → Settings → Docsets → `+` → Add Local Docset. Dash spends a few minutes
+full-text-indexing on first install. Search with the `nlab:` keyword (e.g.
+`nlab:yoneda`).
 
 ## Caveats
 

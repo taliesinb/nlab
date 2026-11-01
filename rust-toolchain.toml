@@ -1,0 +1,6 @@
+# Every cargo invocation in this tree (maturin's build of nlab._conv, the
+# mitex wasm plugin in vendor/mitex, plain cargo) uses stable, whatever the
+# rustup default is.
+[toolchain]
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]

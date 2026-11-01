@@ -2,55 +2,45 @@
 """Bulk-convert the whole nLab content mirror to typst pages.
 
 Every pages/**/content.md becomes build/typ-pages/<id>.typ (+ .html with
---html, + .pdf unless --no-pdf). Content output is never committed, like
-the mirrors. A failure summary lands in out/bulk-report.txt.
+--html, + .pdf unless --no-pdf): converted in-process by nlab.conv (the
+Rust crate; worker threads run in parallel, the GIL is released), then
+compiled by typst. A failure summary lands in build/convert-report.txt.
 
 Conversion cache (table `conversions` in build/state.db): each page is
 keyed on a hash of everything its output depends on - its source after
 edits/ overlays, its title, how each of its [[wiki link]] targets
 resolves in build/page-index.tsv, the build/files.tsv entries of the
-images it references, and a fingerprint of the tools (nlab-typ binary,
-installed mitex package, typst version, this script, the svgo config).
+images it references, and a fingerprint of the tools (the nlab._conv
+extension, installed mitex package, typst version, this module, the svgo
+config).
 A page is re-converted only when its key changes, so e.g. a new redirect
 alias re-converts just the pages whose links it changes. Failures are
 cached too (--retry-failed to try them again). Resumable: results are
 committed as they come in.
 
-Usage: bulk_pages.py [--html] [--no-pdf] [--jobs J] [--limit N]
-                     [--pages ID,ID] [--force] [--retry-failed]
+Usage: nlab convert [--html] [--no-pdf] [--jobs J] [--limit N]
+                    [--pages ID,ID] [--force] [--retry-failed]
 """
 
 import argparse
 import concurrent.futures
 import hashlib
+import json
 import os
 import pathlib
-import platform
 import re
+import shutil
 import sqlite3
 import subprocess
-import sys
 import threading
 import time
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from downloads import read_map, urls_in  # noqa: E402
-
-HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parent
-BUILD = ROOT / "build/nlab-content/pages"
-OUT = ROOT / "build/typ-pages"
-BIN = ROOT / "crates/nlab-typ/target/release/nlab-typ"
-REPORT = HERE / "out/bulk-report.txt"
-FILES_ROOT = ROOT / "build/files"  # content-addressed store (rewrites/downloads.py)
-FILES_MAP = ROOT / "build/files.tsv"  # URL -> store path, read by nlab-typ
-PAGEIDX = ROOT / "build/page-index.tsv"  # rewrites/page_index.py
-STATE_DB = ROOT / "build/state.db"  # shared with rewrites/downloads.py
-TYPST_CSS = ROOT / "build/typ-assets/typst.css"
-
-
-CSS = (HERE / "docset_shell.css").read_text()
-EDITS = ROOT / "edits"
+from . import conv
+from .downloads import read_map, urls_in
+from .toolchain import mitex_package_dir
+from .paths import (ASSETS, BUILD as BUILD_DIR, CONVERT_REPORT as REPORT, EDITS,
+                    FILES as FILES_ROOT, FILES_MAP, PAGE_INDEX as PAGEIDX, PAGES as BUILD,
+                    STATE_DB, TYP_PAGES as OUT, TYPST_CSS, WEBP_CACHE, WEB_ASSETS)
 
 
 def apply_edits(pid: str, text: str) -> tuple[str, str | None]:
@@ -60,8 +50,6 @@ def apply_edits(pid: str, text: str) -> tuple[str, str | None]:
     ef = EDITS / f"{pid}.json"
     if not ef.exists():
         return text, None
-    import json
-
     try:
         spec = json.loads(ef.read_text())
     except json.JSONDecodeError as e:
@@ -78,9 +66,9 @@ def apply_edits(pid: str, text: str) -> tuple[str, str | None]:
             problems.append(f"ambiguous edit ({n} matches): {find[:50]!r}")
     return text, "; ".join(problems) or None
 
-SVG_CACHE = ROOT / "build/svgmin"
-WEBP_CACHE = ROOT / "build/nlab-files-web"  # published as files-web/
-CLASS_CACHE = ROOT / "build/nlab-files-class"  # line-art verdicts (not published)
+SVG_CACHE = BUILD_DIR / "svgmin"
+CLASS_CACHE = BUILD_DIR / "nlab-files-class"  # line-art verdicts (not published)
+SVGO_CONFIG = ASSETS / "svgo.config.mjs"
 STYLE_RE = re.compile(r"<style>.*?</style>", re.S)
 SVG_RE = re.compile(r"<svg.*?</svg>", re.S)
 IMG_RE = re.compile(r'(<img[^>]*src=")files/([^"]+)(")')
@@ -99,7 +87,7 @@ def minified_svg(svg: str) -> str:
     tmp_in.write_text(svg)
     try:
         r = subprocess.run(
-            ["svgo", "--config", str(HERE / "svgo.config.mjs"),
+            ["svgo", "--config", str(SVGO_CONFIG),
              "-i", str(tmp_in), "-o", str(tmp_out)],
             capture_output=True,
             timeout=60,
@@ -117,8 +105,9 @@ def minified_svg(svg: str) -> str:
 
 
 def webp_name(name: str) -> str | None:
-    """Cached cwebp re-encode of a png/jpeg from the file store; returns
-    the name under files-web/, or None to keep the original."""
+    """Cached WebP re-encode (Pillow, quality 85) of a png/jpeg from the
+    file store; returns the name under files-web/, or None to keep the
+    original (also when the WebP would not be smaller)."""
     stem, dot, ext = name.rpartition(".")
     if ext.lower() not in ("png", "jpg", "jpeg"):
         return None
@@ -130,18 +119,20 @@ def webp_name(name: str) -> str | None:
     if out.exists():
         return out.name
     WEBP_CACHE.mkdir(parents=True, exist_ok=True)
-    tmp = WEBP_CACHE.parent / f".webp.{name}.{os.getpid()}.part"
+    tmp = WEBP_CACHE.parent / f".webp.{name}.{threading.get_ident()}.part"
     try:
-        r = subprocess.run(
-            ["cwebp", "-quiet", "-q", "85", str(src), "-o", str(tmp)],
-            capture_output=True,
-            timeout=120,
-        )
-        if r.returncode == 0 and tmp.exists() and                 tmp.stat().st_size < src.stat().st_size:
+        from PIL import Image
+
+        with Image.open(src) as im:
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA" if im.mode in ("P", "PA", "LA", "La")
+                                or "transparency" in im.info else "RGB")
+            im.save(tmp, "WEBP", quality=85)
+        if tmp.stat().st_size < src.stat().st_size:
             tmp.replace(out)
             return out.name
-    except (subprocess.TimeoutExpired, OSError):
-        pass
+    except Exception:
+        pass  # undecodable upload: keep the original
     finally:
         tmp.unlink(missing_ok=True)
     return None
@@ -253,20 +244,13 @@ def file_digest(p: pathlib.Path) -> bytes:
     return h.digest()
 
 
-def mitex_package() -> pathlib.Path:
-    base = (pathlib.Path.home() / "Library/Application Support"
-            if platform.system() == "Darwin"
-            else pathlib.Path(os.environ.get("XDG_DATA_HOME",
-                                             pathlib.Path.home() / ".local/share")))
-    return base / "typst/packages/local/mitex/0.2.7"
-
-
 def tool_fingerprint(mode: str) -> str:
     """Changes whenever a tool that shapes every page changes."""
     h = hashlib.sha256(mode.encode())
-    for p in (BIN, pathlib.Path(__file__).resolve(), HERE / "svgo.config.mjs"):
+    for p in (pathlib.Path(conv.module_path()), pathlib.Path(__file__).resolve(),
+              SVGO_CONFIG):
         h.update(file_digest(p) if p.exists() else b"-")
-    pkg = mitex_package()
+    pkg = mitex_package_dir()
     if pkg.is_dir():
         for f in sorted(p for p in pkg.rglob("*") if p.is_file()):
             h.update(str(f.relative_to(pkg)).encode() + file_digest(f))
@@ -280,28 +264,19 @@ def tool_fingerprint(mode: str) -> str:
     return h.hexdigest()
 
 
-def load_page_index() -> dict[str, str]:
-    """As nlab-typ reads it: lowercased, first entry wins."""
-    idx: dict[str, str] = {}
-    if PAGEIDX.exists():
-        for line in PAGEIDX.read_text(encoding="utf-8").splitlines():
-            name, tab, pid = line.partition("\t")
-            if tab:
-                idx.setdefault(name.strip().lower(), pid.strip())
-    return idx
-
-
-def page_key(tool: str, name: str, source: str, pidx: dict, fmap: dict) -> str:
+def page_key(tool: str, name: str, source: str, converter: conv.Converter,
+             fmap: dict) -> str:
     """Inputs are over-approximated (every [[...]] and every URL in the
     raw source), so the key can change needlessly but never miss a
-    change nlab-typ would see."""
+    change the converter would see. Links resolve through the converter
+    itself, so the key sees exactly its lookups."""
     links = set()
     for inner in WIKI_RE.findall(source):
         if inner.startswith("!"):
             continue
-        target = inner.split("|", 1)[0].strip().lower()
-        if not target.endswith(":file"):
-            links.add((target, pidx.get(target, "")))
+        target = inner.split("|", 1)[0].strip()
+        if not target.lower().endswith(":file"):
+            links.add((target.lower(), converter.resolve(target) or ""))
     images = sorted((u, fmap[u][0]) for u in urls_in(source)
                     if u in fmap and fmap[u][1] != "pdf")
     h = hashlib.sha256()
@@ -317,29 +292,17 @@ def target_of(pid: str, mode: str) -> pathlib.Path:
 
 # ------------------------------------------------------------ conversion
 
-def one(pid: str, name: str, source: str, pdf: bool, html: bool = False):
+def one(converter: conv.Converter, pid: str, name: str, source: str, pdf: bool,
+        html: bool = False):
     """Convert one page; returns (pid, name, status) with status 'ok' or
     an error description."""
     typ = OUT / f"{pid}.typ"
-    env = dict(
-        os.environ,
-        NLAB_FILES_MAP=str(FILES_MAP),
-        NLAB_PAGEIDX=str(PAGEIDX),
-    )
     try:
-        r = subprocess.run(
-            [str(BIN), "page", name],
-            input=source,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return (pid, name, "convert-timeout")
-    if r.returncode != 0:
-        return (pid, name, "convert-fail: " + r.stderr[:120])
-    typ.write_text(r.stdout)
+        typ.write_text(converter.page(source, name))
+    except BaseException as e:  # a Rust panic arrives as pyo3's PanicException
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
+        return (pid, name, f"convert-fail: {type(e).__name__}: {e}"[:160])
     if html:
         try:
             c = subprocess.run(
@@ -385,27 +348,28 @@ def first_line(text: str) -> str:
     return next((l for l in text.splitlines() if l.strip()), "(no output)")
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="nlab convert",
+                                 description="Convert mirror pages to typst (+ HTML/PDF)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--no-pdf", action="store_true")
     ap.add_argument("--html", action="store_true")
-    ap.add_argument("--jobs", type=int, default=8)
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 8)
     ap.add_argument("--pages", help="comma-separated page ids (implies no pruning)")
     ap.add_argument("--force", action="store_true", help="ignore the conversion cache")
     ap.add_argument("--retry-failed", action="store_true",
                     help="re-run pages whose cached result is a failure")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     mode = "html" if args.html else ("typ" if args.no_pdf else "pdf")
 
-    if not BIN.exists():
-        raise SystemExit(f"error: {BIN} missing (cargo build --release in crates/nlab-typ)")
     if not PAGEIDX.exists():
         print(f"warning: {PAGEIDX} missing: every wiki link will point at "
-              "ncatlab.org (run rewrites/page_index.py)", flush=True)
+              "ncatlab.org (run `nlab page-index`)", flush=True)
     if not FILES_MAP.exists():
         print(f"warning: {FILES_MAP} missing: no images will be embedded "
-              "(run rewrites/downloads.py)", flush=True)
+              "(run `nlab download`)", flush=True)
+    converter = conv.Converter(PAGEIDX if PAGEIDX.exists() else None,
+                               FILES_MAP if FILES_MAP.exists() else None)
     OUT.mkdir(parents=True, exist_ok=True)
     files_link = OUT / "files"  # pages reference files/<hash>.<ext>
     if files_link.is_symlink() and files_link.resolve() != FILES_ROOT.resolve():
@@ -418,13 +382,10 @@ def main():
     WEBP_CACHE.mkdir(parents=True, exist_ok=True)
     # pages link ../assets/*.css; mirror the shared sheets there so the
     # generated pages preview correctly straight from build/typ-pages
-    assets = ROOT / "build/assets"
-    if assets.is_dir():
-        import shutil
-        shutil.copy(HERE / "docset_shell.css", assets / "nlab-typst.css")
-        tc = ROOT / "build/typ-assets/typst.css"
-        if tc.exists():
-            shutil.copy(tc, assets / "typst.css")
+    if WEB_ASSETS.is_dir():
+        shutil.copy(ASSETS / "docset_shell.css", WEB_ASSETS / "nlab-typst.css")
+        if TYPST_CSS.exists():
+            shutil.copy(TYPST_CSS, WEB_ASSETS / "typst.css")
     FILES_ROOT.mkdir(parents=True, exist_ok=True)
 
     pages = sorted(BUILD.rglob("content.md"))
@@ -435,7 +396,7 @@ def main():
         pages = pages[: args.limit]
     if not (args.limit or args.pages):
         # pages deleted upstream (after a mirror refresh) must not linger:
-        # html_site.py/typst_site.py publish whatever is in OUT
+        # nlab.site / nlab.typst_site publish whatever is in OUT
         ids = {p.parent.name for p in pages}
         gone = [f for f in OUT.iterdir()
                 if (m := re.fullmatch(r"(\d+)\.(typ|html|pdf)", f.name))
@@ -458,7 +419,7 @@ def main():
 
     print("computing page keys ...", flush=True)
     tool = tool_fingerprint(mode)
-    pidx, fmap = load_page_index(), read_map(FILES_MAP)
+    fmap = read_map(FILES_MAP)
     ok = cached = 0
     fails = []
     todo = []  # (pid, name, source, key)
@@ -468,7 +429,7 @@ def main():
         name = nf.read_text(encoding="utf-8").strip() if nf.exists() else pid
         source, edit_problems = apply_edits(
             pid, md.read_text(encoding="utf-8", errors="replace"))
-        key = page_key(tool, name, source, pidx, fmap)
+        key = page_key(tool, name, source, converter, fmap)
         p = prev.get(pid)
         if p and p[0] == mode and p[1] == key and not args.force:
             if p[2] == "ok" and target_of(pid, mode).exists():
@@ -487,7 +448,7 @@ def main():
     t0 = last_commit = time.time()
     keys = {pid: key for pid, _, _, key in todo}
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
-        futs = [ex.submit(timed, pid, name, source, not args.no_pdf, args.html)
+        futs = [ex.submit(timed, converter, pid, name, source, not args.no_pdf, args.html)
                 for pid, name, source, _ in todo]
         try:
             for i, f in enumerate(concurrent.futures.as_completed(futs), 1):
@@ -514,7 +475,7 @@ def main():
             raise SystemExit(130)
     con.commit()
 
-    REPORT.parent.mkdir(exist_ok=True)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
     with open(REPORT, "w") as f:
         f.write(f"{ok}/{len(pages)} ok ({cached} cached), {len(fails)} failed\n\n")
         for pid, name, status in sorted(fails):

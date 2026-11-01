@@ -7,6 +7,8 @@ rewrites/*.db
 rewrites/out/
 rewrites/bin/
 crates/*/target/
+.venv/
+python/nlab/*.so
 .claude/
 .zed/
 

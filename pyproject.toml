@@ -1,0 +1,47 @@
+[project]
+name = "nlab"
+version = "0.1.0"
+description = "Offline builds of the nLab: wiki source to typst to a static HTML site (and a Dash docset)"
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = [
+    "pillow>=12",          # webp re-encoding, line-art detection
+    # search index; pinned (search.html drives its JS API). The [bin] extra
+    # does not pin the binary package, so it is listed explicitly.
+    "pagefind==1.5.2",
+    "pagefind-bin==1.5.2",
+    "blake3>=1",           # deploy to the symbol host (hash diff)
+]
+
+[project.scripts]
+nlab = "nlab.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+# the Rust converter crate, built as the extension module nlab._conv
+manifest-path = "crates/nlab-conv/Cargo.toml"
+python-source = "python"
+module-name = "nlab._conv"
+features = ["python"]
+bindings = "pyo3"
+
+[tool.uv]
+# rebuild nlab._conv when the Rust (ours or the mitex fork) changes
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rust-toolchain.toml" },
+    { file = "crates/nlab-conv/Cargo.toml" },
+    { file = "crates/nlab-conv/Cargo.lock" },
+    { file = "crates/nlab-conv/src/**/*.rs" },
+    { file = "vendor/mitex/crates/**/*.rs" },
+    { file = "vendor/mitex/crates/**/Cargo.toml" },
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

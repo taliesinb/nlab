@@ -5,7 +5,7 @@ PNGs (render_typst.py) exist for gallery comparison; the docset wants
 SVGs, which scale cleanly and — spliced inline — invert properly in
 Dash's dark mode like the nLab's own tikzcd diagrams. Only hashes whose
 PNG render succeeded are compiled. Output: out/svg/<hash>.svg, which
-make_docset.py --diagrams consumes.
+`nlab build-docset` (--diagrams) consumes.
 """
 
 import argparse

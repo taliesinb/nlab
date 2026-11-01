@@ -1,7 +1,7 @@
 # Source overlay edits
 
 Pointwise corrections applied in-memory to mirror sources before the
-typst pipeline runs (`bulk_pages.py`), for typos and malformed markup
+typst pipeline runs (`nlab convert`), for typos and malformed markup
 in upstream pages. One JSON file per page id:
 
 ```json

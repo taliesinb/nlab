@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write build/page-index.tsv: page name / redirect alias -> page id.
 
-nlab-typ reads this (via NLAB_PAGEIDX, set by bulk_pages.py) to turn
+nlab.conv reads this (Converter page_index, set by nlab.convert) to turn
 [[wiki links]] into in-site links; a name missing from the index falls
 back to an ncatlab.org URL, so without this file every cross-link
 silently points at the live wiki.
@@ -16,29 +16,27 @@ site publishes are indexed: those with a content.md, minus history
 subpages, placeholders and sandboxes (typst_site.skip_page), whose
 links would otherwise dangle in dist/html; they fall back to ncatlab.org.
 
-The file is rewritten only when its content changes. (bulk_pages.py's
+The file is rewritten only when its content changes. (nlab.convert's
 conversion cache keys each page on how its own links resolve, so only
 pages whose links change are re-converted.)
 
-Usage: page_index.py
+Usage: nlab page-index
 """
 
+import argparse
 import difflib
-import pathlib
 import re
-import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from typst_site import skip_page  # noqa: E402
-
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAGES = ROOT / "build/nlab-content/pages"
-OUT = ROOT / "build/page-index.tsv"
+from .paths import PAGE_INDEX as OUT
+from .paths import PAGES
+from .typst_site import skip_page
 
 REDIRECT_RE = re.compile(r"\[\[!redirects\s+([^\]]+)\]\]")
 
 
-def main():
+def main(argv=None):
+    argparse.ArgumentParser(prog="nlab page-index",
+                            description="Write build/page-index.tsv").parse_args(argv)
     if not PAGES.is_dir():
         raise SystemExit(f"error: {PAGES} missing (fetch the nlab-content mirror first)")
     names: list[tuple[str, str]] = []
