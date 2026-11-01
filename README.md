@@ -111,6 +111,9 @@ registry, npm), and:
 | git, curl, tar, Python 3 | everything else | Python 3.15 |
 | Pillow (optional) | line-art detection so diagrams invert in dark mode | |
 
+When rustup is present, `build_site.sh` builds with the **stable** toolchain
+whatever your default is (installing it and the wasm target if needed).
+
 On macOS: `brew install rustup typst svgo webp node && rustup-init -y &&
 rustup target add wasm32-unknown-unknown` (and optionally
 `pip3 install pillow`). typst packages `@preview/fletcher:0.5.8` and

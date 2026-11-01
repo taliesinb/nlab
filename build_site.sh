@@ -63,11 +63,22 @@ if (( ${#missing[@]} )); then
     echo "macOS: brew install rustup typst svgo webp node && rustup-init -y" >&2
     exit 1
 fi
-if command -v rustup >/dev/null &&
-        ! rustup target list --installed | grep -qx wasm32-unknown-unknown; then
-    echo "adding rust target wasm32-unknown-unknown"
-    rustup target add wasm32-unknown-unknown
+# Build with the stable toolchain when rustup manages Rust, whatever the
+# default is (a nightly default is common and not what this was tested on).
+CARGO=(cargo)
+if command -v rustup >/dev/null; then
+    if ! rustup toolchain list | grep -q '^stable'; then
+        echo "installing the stable rust toolchain"
+        rustup toolchain install stable --profile minimal
+    fi
+    CARGO=(cargo +stable)
+    if ! rustup target list --installed --toolchain stable |
+            grep -qx wasm32-unknown-unknown; then
+        echo "adding rust target wasm32-unknown-unknown (stable)"
+        rustup target add wasm32-unknown-unknown --toolchain stable
+    fi
 fi
+echo "rust: $("${CARGO[@]}" --version)"
 tv="$(typst --version | awk '{print $2}')"
 if [[ "$tv" != "$TYPST_WANT"* ]]; then
     echo "warning: typst $tv; the pipeline was developed on $TYPST_WANT.x" >&2
@@ -94,9 +105,9 @@ case "$(uname)" in
     *) PKG_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/typst/packages" ;;
 esac
 PKG="$PKG_ROOT/local/mitex/0.2.7"
-cargo build --release --target wasm32-unknown-unknown \
+"${CARGO[@]}" build --release --target wasm32-unknown-unknown \
     --manifest-path "$MITEX/crates/mitex-wasm/Cargo.toml" --features typst-plugin
-WASM="$(cd "$MITEX" && cargo metadata --format-version 1 --no-deps |
+WASM="$(cd "$MITEX" && "${CARGO[@]}" metadata --format-version 1 --no-deps |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
 WASM="$WASM/wasm32-unknown-unknown/release/mitex_wasm.wasm"
 rm -rf "$PKG" && mkdir -p "$PKG"
@@ -106,7 +117,7 @@ echo "installed @local/mitex:0.2.7 -> $PKG"
 
 # ------------------------------------------------------- 2. converter
 step "nlab-typ converter"
-cargo build --release --manifest-path "$ROOT/crates/nlab-typ/Cargo.toml"
+"${CARGO[@]}" build --release --manifest-path "$ROOT/crates/nlab-typ/Cargo.toml"
 
 # ---------------------------------------------------------- 3. mirror
 step "nlab-content mirror"
