@@ -1835,7 +1835,6 @@ fn parse_path(
                 let c1 = (p0.0 + d * oa.cos(), p0.1 + d * oa.sin());
                 let c2 = (p1.0 + d * ia.cos(), p1.1 + d * ia.sin());
                 seg_curve = Some((c1, c2));
-                seg_curve = Some((c1, c2));
                 if fill_mode {
                     segs.push(format!(
                         "bezier({}, {}, {}, {})",

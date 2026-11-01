@@ -145,7 +145,7 @@ pub(crate) fn xymatrix_to_tikzcd(body: &str) -> String {
             while i < b.len() && b[i].is_whitespace() {
                 i += 1;
             }
-            let read_q = |b: &[char], mut i: usize| -> Option<(String, usize)> {
+            let read_q = |b: &[char], i: usize| -> Option<(String, usize)> {
                 if b.get(i) != Some(&'"') {
                     return None;
                 }
