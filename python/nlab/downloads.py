@@ -79,7 +79,7 @@ TERMINAL = ("missing", "refused", "rejected", "too-large", "blocked", "failed")
 
 GLOBAL_DEFAULTS = {
     "max_concurrent": 8,  # downloads in flight across all hosts
-    "user_agent": "ncatlab-dash/1.0 (+https://github.com/taliesinb/ncatlab-dash)",
+    "user_agent": "nlab/0.1 (+https://github.com/taliesinb/nlab)",
     "max_attempts": 4,  # transient failures before a URL is 'failed'
     "max_wait": 300,  # seconds; a host backed off longer is left for the next run
 }

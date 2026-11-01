@@ -2,7 +2,7 @@
   "note": "nLab-hosted uploads only (images and PDFs): ~1,100 images and ~1,700 PDFs. The only preset suitable for a public deploy.",
   "global": {
     "max_concurrent": 8,
-    "user_agent": "ncatlab-dash/1.0 (+https://github.com/taliesinb/ncatlab-dash)",
+    "user_agent": "nlab/0.1 (+https://github.com/taliesinb/nlab)",
     "max_attempts": 4,
     "max_wait": 300
   },

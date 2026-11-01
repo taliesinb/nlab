@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .paths import HTML_MIRROR, MIRROR, WEB_ASSETS
 
-USER_AGENT = "ncatlab-dash/1.0 (+https://github.com/taliesinb/ncatlab-dash)"
+USER_AGENT = "nlab/0.1 (+https://github.com/taliesinb/nlab)"
 TARBALL = "https://github.com/ncatlab/{repo}/archive/refs/heads/master.tar.gz"
 WEB_ASSET_PATHS = (
     "stylesheets/instiki.css",

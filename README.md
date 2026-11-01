@@ -1,4 +1,4 @@
-# ncatlab-dash
+# nlab
 
 A recipe for turning the [nLab](https://ncatlab.org) — the collaborative wiki
 on category theory, higher category theory, homotopy theory, type theory, and
@@ -86,7 +86,7 @@ The result: ~46,000 searchable names over 20,146 indexed pages.
 ## Building the static HTML site
 
 ```sh
-git clone --recursive https://github.com/taliesinb/ncatlab-dash && cd ncatlab-dash
+git clone --recursive https://github.com/taliesinb/nlab && cd nlab
 uv run nlab build-site             # everything -> dist/html
 uv run nlab build-site --refresh   # re-download the wiki mirror first
 uv run nlab build-site --downloads downloads/common.json   # also fetch arXiv etc.
