@@ -1,31 +1,95 @@
 # nlab
 
-A recipe for turning the [nLab](https://ncatlab.org) — the collaborative wiki
-on category theory, higher category theory, homotopy theory, type theory, and
-mathematical physics — into an offline, instantly-searchable **Dash docset**,
-and (the main output nowadays) a fully independent **static HTML site**.
+A pipeline for turning the [nLab](https://ncatlab.org) — the wonderful 
+collaborative wiki on category theory, higher category theory, homotopy 
+theory, type theory, and mathematical physics — into a single 
+[typst](https://typst.app/) corpus that compiles to a static, modern 
+website with various quality-of-life improvements over the original ncatlab:
+* higher-quality, more accurate, SVG-rendered commutative diagrams
+* accurate, modern MathML-based equation rendering
+* modern, dark-mode CSS styling
+* client-side full-text search of the entire corpus
 
-The static site re-renders every page from its Markdown+itex source through
-[typst](https://typst.app) (the Rust crate `crates/nlab-conv`, exposed to
-Python as `nlab.conv`, converts the wiki dialect, including tikzcd /
-xymatrix / tikzpicture / array diagrams, to typst; typst's HTML export emits
-MathML math and inline-SVG diagrams), with in-site cross-links, dark mode,
-and client-side full-text search via [Pagefind](https://pagefind.app).
-Everything is driven by one command, `uv run nlab ...`; see [Building the
-static HTML site](#building-the-static-html-site). The rest of this section
-describes the docset.
+You can [serve](#serving-the-static-html-site-locally) or 
+[build](#building-the-static-html-site) your own offline copy, or you can browse a recent build that [I host here](https://nlab.tali.link).
 
-[Dash](https://kapeli.com/dash) is a macOS documentation browser: it stores
-"docsets" (self-contained bundles of HTML plus a SQLite search index) fully
-offline and provides as-you-type fuzzy search across everything you have
-installed. Docsets are an open format, so they work beyond Dash itself — in
-particular [Bolt](https://github.com/BoltDocs), a free open-source docset
-browser for iOS/iPadOS, can load the same bundle, giving you the entire nLab
-on an iPhone or iPad with no network connection.
+<p float="center">
+<img width="320" alt="search" src="https://github.com/user-attachments/assets/ab94d42f-fe98-4f3b-bed6-7384cadd8393" />
+<img width="320" alt="page-top" src="https://github.com/user-attachments/assets/15d2a5bd-1bcb-40fd-a157-5cf3b66ecde5" />
+<img width="320" alt="diagram" src="https://github.com/user-attachments/assets/dcefe965-d117-4e74-8677-55190ca3db04" />
+</p>
 
-This repository contains **only the recipe**. The nLab's content is fetched at
-build time from the official file-based mirrors that the nLab project itself
-publishes:
+## Motivation
+
+[nLab](https://ncatlab.org) is an extraordinary resource built by many 
+very talented people. 
+
+But like any long-runnning community project, it has accumulated tech debt 
+that is up to the newer generation to pay off: it lacks full-text search, 
+has an archaic build process, uses an ancient dialect of TeX, resorts to inline 
+images for mathematical typesetting, and employs a hodge-podge of commutative 
+diagram markup formats that either look ugly (low-res, no anti-aliasing), 
+or misrender (HTML tables).  
+
+Luckily, the age of LLMs makes rejuvenation possible. We can kill 
+multiple birds with one stone by moving the entire corpus to the 
+modern TeX-replacement known as [Typst](https://typst.app/).
+
+This is my (draft) attempt to do this programmatically. 
+
+## Development
+
+The *raw code* for this project was almost entirely written by Claude 
+(various models, culminating in Opus 5.5), but supervised extremely 
+closely by me, (Taliesin Beynon)[https://tali.link]. The motivation was 
+to make an entirely offline version of nlab not only easy to create, 
+but *better* than the original.
+
+This project involved careful *human* technical design at every stage of 
+the project; as of 2026, LLMs are amazingly productive coders, but lack 
+far-sighted strategic design sense, the ability to manage technical debt, 
+and most importantly, any real sense of software engineering *taste*. 
+They are, effectively, very, very good interns.
+
+The majority of the human work came from many hours of painful QA in 
+which I reviewed a large fraction of the converted commutative diagrams
+for errors, iterating in a loop with Claude to fix them, understand 
+*how* it was fixing them and manage the accumulation of technical debt, 
+and to build a test suite.
+
+Errors in conversation definitely do remain, please report them as issues on this
+repo. I will add a "report issue" button to the build in the near future to streamline
+this process.
+
+## Usage
+
+### CLI tool
+
+The repo defines an `nlab` python package and CLI tool `uv run nlab ...` 
+that drives all stages of this pipeline:
+
+1. downloading of the current nLab mirror and static assets (like custom diagrams)
+2. parsing and converting the embedded TeX dialect, and various forms of commutative diagram, into near-identical [typst](https://typst.app) equivalents, using a custom Rust crate for speed
+3. rendering the resulting typst corpus to a static HTLM site, using MathML and SVG
+4. de-aliasing the various original nLab pages
+4. building a full-text search index
+5. publishing this site via [Netlify](https://www.netlify.com/)
+6. exporting the static site to an offline [Dash](https://kapeli.com/dash) docset
+
+The Rust crate `crates/nlab-conv` (exposed to Python as `nlab.conv`) 
+converts the wiki dialect (markdown+itex source) into [typst](https://typst.app), 
+including tikzcd / xymatrix / tikzpicture / array diagrams. 
+
+My [custom fork](https://github.com/taliesinb/mitex) of Mitex is used
+to convert TeX to equivalent `typst` at compile time; the fork adds many missing 
+features that were required to get all nlab's itex to convert accurately.
+
+Typst's HTML export emits MathML math and inline-SVG diagrams, with in-site 
+cross-links, dark mode, and client-side full-text search via 
+[Pagefind](https://pagefind.app).
+
+The nLab's content is fetched at build time from the official file-based 
+mirrors that the nLab project itself publishes:
 
 - [ncatlab/nlab-content-html](https://github.com/ncatlab/nlab-content-html) —
   every wiki page as rendered XHTML+MathML, laid out as
@@ -38,52 +102,12 @@ publishes:
 - CSS/JS assets fetched from ncatlab.org (page styles, `thm_numbering.js` and
   its `prototype.js` dependency, `page_helper.js`).
 
-## What the recipe adds
+### Serving the static HTML site locally
 
-Beyond mechanically repackaging ~20,700 pages, `nlab build-docset` does a
-fair amount of curation:
+`uv run nlab serve` will serve the site on your localhost, building it from
+scratch if necessary (see below).
 
-- **Native math, no MathJax.** nLab pages ship MathML, which the WebKit view
-  inside Dash renders natively. The nLab's own theorem/section numbering
-  scripts are vendored so propositions read "Proposition 3.4." with proof
-  tombstones, exactly like the live site.
-- **Working offline hyperlinks.** Wiki links (`/nlab/show/<name>`) are
-  resolved through a name→page-id map to relative links inside the docset;
-  anything unresolvable (uploads, missing pages, wiki actions) points at the
-  live site instead. Editing chrome (nav bars, search form, edit/history
-  links) is stripped.
-- **A typed index from the nLab's own ontology.** `category:` tags and
-  page-name conventions classify pages as `Person` (~6,000 biography pages),
-  `Resource` (books/papers), `Category` (floating tables of contents),
-  `Guide` (expository series like *geometry of physics*), with concepts as
-  `Entry`. Archived "… > history" subpages, blanked "empty NNN" placeholders,
-  and Sandbox pages stay out of the index.
-- **Wikipedia-style redirects.** Every nLab redirect stays searchable under
-  its own name but displays as "alias → canonical name" (via Dash's
-  `dash_entry_menuDescription` path metadata) and opens the canonical page —
-  aliases are index rows, never duplicated pages.
-- **Aggressive alias de-noising.** Of ~55,000 raw redirect names, more than
-  half are spelling variants, and the build collapses them: case, dash-style
-  (`--` vs en/em-dash), hyphen-vs-space, `∞` vs "infinity", plural
-  inflections (toposes *and* topoi, spectra, simplices), escaped-apostrophe
-  residue, people initials ("A. A. Markov Jr"), non-Latin-script names, and
-  one-letter transliteration wobbles (Andrei/Andrej/Andrey). Genuinely
-  different names survive ("Bill Lawvere", "Souslin", unaccented
-  "Poincare"). Pages that declare combinatorial alias walls (>20 aliases)
-  additionally drop names that only add one qualifier word to an
-  already-indexed name.
-- **Slim pages.** The per-page boilerplate the wiki ships 20,000× over —
-  identical inline styles/scripts, the inlined logo SVG, hidden TeX
-  `<annotation>` sources — is deduplicated into shared assets or dropped,
-  cutting the docset from 730 MB to ~530 MB with pixel-identical rendering.
-- **Dash niceties.** In-page table-of-contents anchors at every section
-  heading, commutative diagrams scaled 1.5× for comfortable reading, docset
-  icon derived from the nLab logo, and a fallback URL so entries can be
-  opened on ncatlab.org.
-
-The result: ~46,000 searchable names over 20,146 indexed pages.
-
-## Building the static HTML site
+### Building the static HTML site
 
 ```sh
 git clone --recursive https://github.com/taliesinb/nlab && cd nlab
@@ -104,9 +128,57 @@ uv run nlab serve-site --port 9000 --rebuild   # build-site first, then serve
 
 `serve-site` builds the site first if none exists yet (or with `--rebuild`;
 other options, e.g. `--downloads`, are passed on to `build-site`), and serves
-only if the build succeeds. `/` redirects to the search page, as on Netlify. Pages live at `dist/html/<slug>/`
-(lowercased, hyphenated page names), ~20,000 of them, ~3 GB with the
-downloaded files and the search index.
+only if the build succeeds. `/` redirects to the search page, as on Netlify. 
+
+Pages live at `dist/html/<slug>/` (lowercased, hyphenated page names), 
+~20,000 of them, ~3 GB with the downloaded files and the search index.
+
+### Building the Dash docset
+
+[Dash](https://kapeli.com/dash) is a macOS documentation browser: it stores
+"docsets" (self-contained bundles of HTML plus a SQLite search index) fully
+offline and provides as-you-type fuzzy search across everything you have
+installed. Docsets are an open format, so they work beyond Dash itself — in
+particular [Bolt](https://github.com/BoltDocs), a free open-source docset
+browser for iOS/iPadOS, can load the same bundle, giving you the entire nLab
+on an iPhone or iPad with no network connection.
+
+To build the dash docset, use:
+
+```sh
+uv run nlab build-docset             # fetches both mirrors (~1.5 GB unpacked
+                                     # into build/) and the live site's CSS/JS
+uv run nlab build-docset --refresh   # re-download them to pick up new content
+uv run nlab build-docset --only "pullback,Yoneda lemma" --out dist-mini  # quick
+```
+
+This produces `dist/nLab.docset` (~530 MB). If `build/typ-pages` exists (from
+`nlab build-site`), its typst-rendered pages replace the transformed mirror
+pages (`--no-typst-pages` to opt out). Install it by double-clicking, or via
+Dash → Settings → Docsets → `+` → Add Local Docset. Dash spends a few minutes
+full-text-indexing on first install. Search with the `nlab:` keyword (e.g.
+`nlab:yoneda`).
+
+### Converting a single page to typst
+
+To output the typst for a single page during development or testing, 
+you can use the CLI as follows:
+
+```sh
+uv run nlab convert-page "Yoneda lemma"`
+```
+
+You can also provide a page ID or specify `-` to read from stdin.
+
+This uses the same page index and downloads map the build uses. 
+
+In Python, this takes the form:
+
+```python
+from nlab import conv
+c = conv.Converter(page_index="build/page-index.tsv", files_map="build/files.tsv")
+typ = c.page(source, title="Yoneda lemma")
+```
 
 ### Requirements
 
@@ -129,7 +201,7 @@ The typst HTML export is still experimental (`--features html`) and its
 output changes between typst releases; other versions than 0.15.x may work but
 are untested.
 
-### Layout
+## Code layout
 
 | path | what |
 |---|---|
@@ -142,10 +214,16 @@ are untested.
 | `rewrites/` | research tools from the diagram-rewrite work (galleries, comparisons); not part of the build |
 | `build/`, `dist/` | everything generated (gitignored); shared state in `build/state.db` |
 
-### What `nlab build-site` does
+## `nlab` subcommands
 
-In order (`uv run nlab --help` lists the commands; each step is also its own
-command):
+The top-level subcommands that will invoke other subcommands automatically are:
+
+1. [`uv run nlab serve-site`](#serving-the-static-html-site-locally)
+2. [`uv run nlab build-site`](#building-the-static-html-site)
+3. [`uv run nlab build-docset`](#building-the-dash-docset)
+4. [`uv run nlab convert-page`](#converting-a-single-page-to-typst)
+
+The individual subcommands you may want to invoke during active development are:
 
 1. **`nlab setup`.** Checks the tools, initializes the `vendor/mitex`
    submodule if needed (our [mitex fork](https://github.com/taliesinb/mitex),
@@ -185,17 +263,7 @@ command):
    (configured by `pagefind.yml`). History subpages, placeholders and
    sandboxes are left out.
 
-To look at one page's typst: `uv run nlab convert-page "Yoneda lemma"` (a page
-name or id; `-` reads stdin), with the same page index and downloads map the
-build uses. In Python:
-
-```python
-from nlab import conv
-c = conv.Converter(page_index="build/page-index.tsv", files_map="build/files.tsv")
-typ = c.page(source, title="Yoneda lemma")
-```
-
-### Downloads
+## Downloading assets
 
 Pages reference ~65,000 distinct URLs. `nlab download` scans them all
 into `build/state.db` (SQLite) on every run, decides per URL from a JSON rules
@@ -262,7 +330,7 @@ followed by hand, re-checked against the rules, and rate-limited for their
 own host. Back-off state and `robots.txt` (cached for a week) persist in the
 database across runs.
 
-### Deploying
+## Deploying the site
 
 - Netlify: `uv run nlab deploy-netlify` (production; `--draft` for a preview
   URL, `--dry-run` to print the command). `_redirects` sends `/` to
@@ -277,22 +345,6 @@ database across runs.
 `uv run nlab build-typst-site` emits the same pages as slug-named `.typ`
 sources (`dist/typst`) for browsing typst directly.
 
-## Building the Dash docset
-
-```sh
-uv run nlab build-docset             # fetches both mirrors (~1.5 GB unpacked
-                                     # into build/) and the live site's CSS/JS
-uv run nlab build-docset --refresh   # re-download them to pick up new content
-uv run nlab build-docset --only "pullback,Yoneda lemma" --out dist-mini  # quick
-```
-
-This produces `dist/nLab.docset` (~530 MB). If `build/typ-pages` exists (from
-`nlab build-site`), its typst-rendered pages replace the transformed mirror
-pages (`--no-typst-pages` to opt out). Install it by double-clicking, or via
-Dash → Settings → Docsets → `+` → Add Local Docset. Dash spends a few minutes
-full-text-indexing on first install. Search with the `nlab:` keyword (e.g.
-`nlab:yoneda`).
-
 ## Caveats
 
 - Uploaded files (images/PDFs under `/nlab/files/...`) are not part of the
@@ -301,3 +353,10 @@ full-text-indexing on first install. Search with the `nlab:` keyword (e.g.
 - A couple of oddities are upstream wiki content, not build artifacts (e.g.
   empty theorem cross-references on a few pages, reproducible on
   ncatlab.org).
+
+
+
+
+
+
+
